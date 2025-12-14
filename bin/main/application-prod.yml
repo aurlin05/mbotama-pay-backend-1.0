@@ -1,0 +1,82 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: mbotamapay-backend
+  
+  # PostgreSQL Configuration for Production
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/mbotamapay}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:password}
+    driver-class-name: org.postgresql.Driver
+  
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  
+  # Flyway Migrations
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+# JWT Configuration
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 86400000
+  refresh-expiration: 604800000
+
+# KYC Configuration
+kyc:
+  limits:
+    none: 0
+    level1: 500000
+    level2: -1
+
+# OTP Configuration
+otp:
+  expiration: 300
+  length: 6
+  max-attempts: 3
+
+# CORS Configuration
+cors:
+  allowed-origins: ${CORS_ORIGINS:https://mbotamapay.com}
+  allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+  allowed-headers: "*"
+  allow-credentials: true
+
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+
+# Logging
+logging:
+  level:
+    root: WARN
+    com.mbotamapay: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# OpenAPI / Swagger (disabled in prod)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vérification KYC - Action requise</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7fa;
+            padding: 20px;
+        }
+
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .logo span {
+            color: #fef3c7;
+        }
+
+        .warning-icon {
+            font-size: 70px;
+            margin-top: 20px;
+        }
+
+        .content {
+            padding: 40px 30px;
+        }
+
+        h1 {
+            color: #1f2937;
+            font-size: 24px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        .message {
+            color: #6b7280;
+            font-size: 16px;
+            line-height: 1.7;
+            margin-bottom: 25px;
+            text-align: center;
+        }
+
+        .reason-box {
+            background: #fef2f2;
+            border-left: 4px solid #ef4444;
+            padding: 20px;
+            margin: 25px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .reason-box h3 {
+            color: #991b1b;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .reason-box p {
+            color: #b91c1c;
+            font-size: 15px;
+        }
+
+        .steps-box {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 25px;
+            margin: 25px 0;
+        }
+
+        .steps-box h3 {
+            color: #1f2937;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+
+        .step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .step:last-child {
+            margin-bottom: 0;
+        }
+
+        .step-number {
+            background: #6366f1;
+            color: #ffffff;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .step-text {
+            color: #4b5563;
+            font-size: 14px;
+            padding-top: 4px;
+        }
+
+        .cta-button {
+            display: block;
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: #ffffff;
+            text-align: center;
+            padding: 16px 30px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            font-size: 16px;
+            margin: 30px 0;
+        }
+
+        .footer {
+            background: #f9fafb;
+            padding: 25px 30px;
+            text-align: center;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .footer p {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="logo">Mbotama<span>Pay</span></div>
+            <div class="warning-icon">⚠️</div>
+        </div>
+
+        <div class="content">
+            <h1>Action requise</h1>
+            <p class="message">
+                Bonjour<span th:if="${firstName != null}" th:text="' ' + ${firstName}"></span>,<br>
+                Nous n'avons pas pu valider votre vérification d'identité.
+            </p>
+
+            <div class="reason-box">
+                <h3>❌ Raison du rejet</h3>
+                <p th:text="${rejectionReason}">Document illisible ou de mauvaise qualité</p>
+            </div>
+
+            <div class="steps-box">
+                <h3>📋 Que faire maintenant ?</h3>
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <span class="step-text">Vérifiez que vos documents sont clairs et lisibles</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <span class="step-text">Assurez-vous que les informations sont visibles et non coupées</span>
+                </div>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <span class="step-text">Soumettez à nouveau vos documents via l'application</span>
+                </div>
+            </div>
+
+            <a href="#" class="cta-button">Soumettre à nouveau →</a>
+
+            <p class="message">
+                Besoin d'aide ? Notre équipe support est disponible 24/7 pour vous accompagner.
+            </p>
+        </div>
+
+        <div class="footer">
+            <p>© 2024 MbotamaPay. Tous droits réservés.</p>
+        </div>
+    </div>
+</body>
+
+</html>

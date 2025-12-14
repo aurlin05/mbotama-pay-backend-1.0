@@ -1,0 +1,53 @@
+package com.mbotamapay.entity.enums;
+
+/**
+ * Audit Action Types
+ * Defines all auditable actions in the system
+ */
+public enum AuditAction {
+    // Authentication
+    LOGIN_SUCCESS,
+    LOGIN_FAILED,
+    LOGOUT,
+    REGISTER,
+    PASSWORD_CHANGE,
+    PASSWORD_RESET_REQUEST,
+    PASSWORD_RESET_COMPLETE,
+    OTP_SENT,
+    OTP_VERIFIED,
+    OTP_FAILED,
+
+    // KYC
+    KYC_DOCUMENT_SUBMIT,
+    KYC_LEVEL_1_APPROVED,
+    KYC_LEVEL_2_APPROVED,
+    KYC_REJECTED,
+
+    // Transactions
+    TRANSACTION_INITIATED,
+    TRANSACTION_COMPLETED,
+    TRANSACTION_FAILED,
+    TRANSACTION_CANCELLED,
+
+    // Refunds
+    REFUND_INITIATED,
+    REFUND_COMPLETED,
+    REFUND_FAILED,
+
+    // User Management
+    USER_PROFILE_UPDATED,
+    USER_PHONE_CHANGED,
+    USER_DEACTIVATED,
+    USER_REACTIVATED,
+
+    // Admin Actions
+    ADMIN_USER_BLOCK,
+    ADMIN_USER_UNBLOCK,
+    ADMIN_KYC_MANUAL_APPROVE,
+    ADMIN_TRANSACTION_REFUND,
+
+    // Security
+    SUSPICIOUS_ACTIVITY_DETECTED,
+    RATE_LIMIT_EXCEEDED,
+    INVALID_TOKEN_ATTEMPT
+}

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Confirmation de transaction</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7fa;
+            padding: 20px;
+        }
+
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            padding: 30px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        .logo span {
+            color: #fbbf24;
+        }
+
+        .content {
+            padding: 35px 30px;
+        }
+
+        .status-badge {
+            text-align: center;
+            margin-bottom: 25px;
+        }
+
+        .status-icon {
+            font-size: 50px;
+        }
+
+        .status-text {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .status-success {
+            color: #10b981;
+        }
+
+        .status-pending {
+            color: #f59e0b;
+        }
+
+        .status-failed {
+            color: #ef4444;
+        }
+
+        .amount-box {
+            background: #f9fafb;
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .amount {
+            font-size: 36px;
+            font-weight: 700;
+            color: #1f2937;
+        }
+
+        .currency {
+            font-size: 18px;
+            color: #6b7280;
+            margin-left: 5px;
+        }
+
+        .fee {
+            color: #9ca3af;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+
+        .details {
+            margin: 25px 0;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e5e7eb;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .detail-value {
+            color: #1f2937;
+            font-weight: 500;
+            font-size: 14px;
+            text-align: right;
+        }
+
+        .reference-box {
+            background: #eff6ff;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .reference-label {
+            color: #3b82f6;
+            font-size: 12px;
+            margin-bottom: 5px;
+        }
+
+        .reference-code {
+            color: #1e40af;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .footer {
+            background: #f9fafb;
+            padding: 20px 30px;
+            text-align: center;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .footer p {
+            color: #9ca3af;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="email-container">
+        <div class="header">
+            <div class="logo">Mbotama<span>Pay</span></div>
+        </div>
+
+        <div class="content">
+            <div class="status-badge">
+                <div class="status-icon" th:switch="${status}">
+                    <span th:case="'COMPLETED'">✅</span>
+                    <span th:case="'PENDING'">⏳</span>
+                    <span th:case="'FAILED'">❌</span>
+                    <span th:case="*">📋</span>
+                </div>
+                <div th:switch="${status}">
+                    <p th:case="'COMPLETED'" class="status-text status-success">Transaction réussie</p>
+                    <p th:case="'PENDING'" class="status-text status-pending">Transaction en cours</p>
+                    <p th:case="'FAILED'" class="status-text status-failed">Transaction échouée</p>
+                    <p th:case="*" class="status-text">Transaction</p>
+                </div>
+            </div>
+
+            <div class="amount-box">
+                <span class="amount" th:text="${#numbers.formatInteger(amount, 1, 'COMMA')}">25,000</span>
+                <span class="currency" th:text="${currency}">FCFA</span>
+                <p class="fee" th:if="${fee > 0}">Frais: <span th:text="${fee}">100</span> <span
+                        th:text="${currency}">FCFA</span></p>
+            </div>
+
+            <div class="details">
+                <div class="detail-row" th:if="${isSender}">
+                    <span class="detail-label">Destinataire</span>
+                    <span class="detail-value" th:text="${recipientName + ' (' + recipientPhone + ')'}">Amadou Diallo
+                        (+221...)</span>
+                </div>
+                <div class="detail-row" th:unless="${isSender}">
+                    <span class="detail-label">Expéditeur</span>
+                    <span class="detail-value" th:text="${senderName + ' (' + senderPhone + ')'}">Fatou Ndiaye
+                        (+221...)</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Plateforme</span>
+                    <span class="detail-value" th:text="${platform}">Wave</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Date</span>
+                    <span class="detail-value"
+                        th:text="${#temporals.format(transactionDate, 'dd/MM/yyyy HH:mm')}">06/12/2024 14:30</span>
+                </div>
+                <div class="detail-row" th:if="${description != null}">
+                    <span class="detail-label">Motif</span>
+                    <span class="detail-value" th:text="${description}">-</span>
+                </div>
+            </div>
+
+            <div class="reference-box">
+                <p class="reference-label">Référence de transaction</p>
+                <p class="reference-code" th:text="${reference}">TXN-2024120600123</p>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>© 2024 MbotamaPay. Conservez cet email comme reçu de votre transaction.</p>
+        </div>
+    </div>
+</body>
+
+</html>
