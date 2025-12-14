@@ -47,6 +47,7 @@ public class SecurityConfig {
             "/auth/**",
             "/operators/**",
             "/countries/**",
+            "/transfers/**",
             "/h2-console/**",
             "/api-docs/**",
             "/swagger-ui/**",
@@ -63,6 +64,7 @@ public class SecurityConfig {
                 .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())) // For H2 console
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(WHITE_LIST_URLS).permitAll()
+                        .requestMatchers("/transfers/preview").permitAll()
                         .requestMatchers("/users/me/**").authenticated()
                         .requestMatchers("/payments/**").hasAnyRole("KYC_LEVEL_1", "KYC_LEVEL_2", "ADMIN")
                         .requestMatchers("/admin/**").hasRole("ADMIN")

@@ -135,7 +135,7 @@ class PaymentRoutingServiceTest {
                     .build();
 
             when(routeRepository.findActiveRoutes(Country.SENEGAL, Country.SENEGAL))
-                    .thenReturn(List.of(route));
+                    .thenReturn(new java.util.ArrayList<>(List.of(route)));
             when(feeCalculator.calculateFees(any(), any()))
                     .thenReturn(com.mbotamapay.dto.FeeBreakdown.builder()
                             .gatewayFee(2700L)
@@ -183,6 +183,19 @@ class PaymentRoutingServiceTest {
             // Then
             assertThat(result.isRouteFound()).isFalse();
             assertThat(result.getRoutingReason()).contains("non détecté");
+        }
+
+        @Test
+        @DisplayName("Retourne routeFound=false pour SN→CG (aucune route configurée)")
+        void shouldReturnNotFoundForSnToCg() {
+            when(routeRepository.findActiveRoutes(Country.SENEGAL, Country.CONGO_BRAZZAVILLE))
+                    .thenReturn(List.of());
+
+            RoutingDecision result = routingService.determineRoute(
+                    "+221775688191", "+242066031323", 100L);
+
+            assertThat(result.isRouteFound()).isFalse();
+            assertThat(result.getRoutingReason()).contains("Aucune route configurée");
         }
     }
 }

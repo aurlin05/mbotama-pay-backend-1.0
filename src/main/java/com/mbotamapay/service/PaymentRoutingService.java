@@ -76,6 +76,8 @@ public class PaymentRoutingService {
 
         log.info("Detected countries: {} -> {}", source, dest);
 
+        Optional<MobileOperator> destOperatorOpt = detectOperator(recipientPhone, dest);
+
         // 2. Chercher les routes disponibles
         List<GatewayRoute> routes = routeRepository.findActiveRoutes(source, dest);
 
@@ -90,7 +92,7 @@ public class PaymentRoutingService {
         }
 
         // 3. Sélectionner la meilleure route
-        GatewayRoute bestRoute = selectBestRoute(routes, dest, amount);
+        GatewayRoute bestRoute = selectBestRoute(routes, destOperatorOpt, dest, amount);
 
         // 4. Calculer les frais
         FeeBreakdown fees = feeCalculator.calculateFees(amount, bestRoute.getGatewayFeePercent());
@@ -132,16 +134,26 @@ public class PaymentRoutingService {
     /**
      * Sélectionne la meilleure route parmi les options disponibles
      */
-    private GatewayRoute selectBestRoute(List<GatewayRoute> routes, Country dest, Long amount) {
+    private GatewayRoute selectBestRoute(List<GatewayRoute> routes, Optional<MobileOperator> destOperatorOpt, Country dest, Long amount) {
+        List<GatewayRoute> supported = new java.util.ArrayList<>();
+        for (GatewayRoute route : routes) {
+            if (destOperatorOpt.isPresent()) {
+                if (!destOperatorOpt.get().supportsGateway(route.getGateway())) {
+                    continue;
+                }
+            }
+            supported.add(route);
+        }
+        List<GatewayRoute> baseCandidates = supported.isEmpty() ? routes : supported;
         // Filtrer d'abord les routes avec stock suffisant
         List<GatewayRoute> withStock = new java.util.ArrayList<>();
-        for (GatewayRoute route : routes) {
+        for (GatewayRoute route : baseCandidates) {
             Optional<GatewayStock> stock = stockRepository.findByGatewayAndCountry(route.getGateway(), dest);
             if (stock.isPresent() && stock.get().hasSufficientBalance(amount)) {
                 withStock.add(route);
             }
         }
-        List<GatewayRoute> candidates = withStock.isEmpty() ? routes : withStock;
+        List<GatewayRoute> candidates = withStock.isEmpty() ? baseCandidates : withStock;
         // Choisir la route avec le plus faible pourcentage de frais
         candidates.sort(java.util.Comparator
                 .comparing(GatewayRoute::getGatewayFeePercent)

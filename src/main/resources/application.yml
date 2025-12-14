@@ -140,6 +140,8 @@ routing:
   enabled: true
   prefer-direct-route: true
   stock-threshold-alert: 100000
+  auto-config:
+    enabled: false
 
 # Fee Configuration
 fees:
