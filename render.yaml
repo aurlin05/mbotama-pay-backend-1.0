@@ -22,7 +22,7 @@ services:
         value: ""
         previewValue: "change-me-in-render"
       - key: CORS_ORIGINS
-        value: "https://mbotamapay.com"
+        value: "https://mbotamapay.com,https://v0-mbotama-pay.vercel.app"
       - key: MAIL_HOST
         value: "smtp.gmail.com"
       - key: MAIL_PORT
@@ -53,7 +53,7 @@ services:
         value: ""
         previewValue: "https://mbotamapay-backend.onrender.com"
       - key: APP_FRONTEND_URL
-        value: ""
+        value: "https://v0-mbotama-pay.vercel.app"
         previewValue: "https://mbotamapay.com"
       - key: SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE
         value: "5"
