@@ -184,6 +184,10 @@ public class AuthService {
         if (isFirstVerification) {
             smsService.sendWelcome(user.getPhoneNumber(), user.getFirstName());
             log.info("Step 7.1: Welcome SMS queued for user: {}", user.getPhoneNumber());
+            if (user.getEmail() != null && !user.getEmail().isBlank()) {
+                emailService.sendWelcomeEmail(user);
+                log.info("Step 7.2: Welcome Email queued for user: {}", user.getEmail());
+            }
         }
 
         // Generate tokens
@@ -306,6 +310,13 @@ public class AuthService {
 
         // Send SMS (async)
         smsService.sendOtp(phoneNumber, code);
+
+        // Send Email (async) if user has email
+        userRepository.findByPhoneNumber(phoneNumber).ifPresent(user -> {
+            if (user.getEmail() != null && !user.getEmail().isBlank()) {
+                emailService.sendOtpEmail(user.getEmail(), code, user.getFirstName());
+            }
+        });
 
         log.info("OTP sent to phone: {}", phoneNumber);
     }

@@ -153,9 +153,9 @@ public class EmailService {
             mailSender.send(message);
             log.info("Email sent successfully to: {}", to);
         } catch (MessagingException e) {
-            log.error("Failed to send email to {}: {}", to, e.getMessage());
+            log.error("Failed to send email to {}", to, e);
         } catch (Exception e) {
-            log.error("Unexpected error sending email to {}: {}", to, e.getMessage());
+            log.error("Unexpected error sending email to {}", to, e);
         }
     }
 

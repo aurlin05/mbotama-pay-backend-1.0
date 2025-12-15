@@ -33,6 +33,7 @@ public class KycService {
     private final UserRepository userRepository;
     private final KycDocumentRepository kycDocumentRepository;
     private final TransactionRepository transactionRepository;
+    private final EmailService emailService;
     @org.springframework.beans.factory.annotation.Value("${kyc.auto-approve:false}")
     private boolean autoApprove;
 
@@ -140,6 +141,9 @@ public class KycService {
                 user.setKycLevel(KycLevel.LEVEL_1);
                 userRepository.save(user);
                 log.info("User {} upgraded to KYC Level 1", user.getId());
+                if (user.getEmail() != null && !user.getEmail().isBlank()) {
+                    emailService.sendKycApprovedEmail(user);
+                }
             }
         }
         // Check for Level 2 upgrade
@@ -150,6 +154,9 @@ public class KycService {
                 user.setKycLevel(KycLevel.LEVEL_2);
                 userRepository.save(user);
                 log.info("User {} upgraded to KYC Level 2", user.getId());
+                if (user.getEmail() != null && !user.getEmail().isBlank()) {
+                    emailService.sendKycApprovedEmail(user);
+                }
             }
         }
     }
