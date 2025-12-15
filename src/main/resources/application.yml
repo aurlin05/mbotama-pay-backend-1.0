@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${PORT:8080}
   servlet:
     context-path: /api/v1
 
@@ -11,7 +11,7 @@ spring:
   datasource:
     url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/mbotamapay_db}
     username: ${DATABASE_USERNAME:mbotamapay_admin}
-    password: ${DATABASE_PASSWORD:Aurlin10}
+    password: ${DATABASE_PASSWORD:}
     driver-class-name: org.postgresql.Driver
   
   # JPA Configuration
@@ -34,8 +34,8 @@ spring:
   mail:
     host: ${MAIL_HOST:smtp.gmail.com}
     port: ${MAIL_PORT:587}
-    username: ${MAIL_USERNAME:aurlinmika5@gmail.com}
-    password: ${MAIL_PASSWORD:cyooghquxmogzjqr}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
     properties:
       mail:
         smtp:
