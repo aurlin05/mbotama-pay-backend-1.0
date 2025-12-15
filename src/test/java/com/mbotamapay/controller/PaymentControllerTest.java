@@ -1,7 +1,12 @@
 package com.mbotamapay.controller;
 
+import com.mbotamapay.config.JwtAuthenticationFilter;
+import com.mbotamapay.config.RateLimiter;
 import com.mbotamapay.config.SecurityConfig;
 import com.mbotamapay.gateway.GatewayService;
+import com.mbotamapay.gateway.impl.CinetPayGateway;
+import com.mbotamapay.gateway.impl.FeexPayGateway;
+import com.mbotamapay.gateway.impl.PayTechGateway;
 import com.mbotamapay.repository.TransactionRepository;
 import com.mbotamapay.service.JwtService;
 import com.mbotamapay.service.TokenBlacklistService;
@@ -10,6 +15,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -25,7 +32,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Controller tests for PaymentController
  */
-@WebMvcTest(PaymentController.class)
+@WebMvcTest(value = PaymentController.class,
+        excludeFilters = @ComponentScan.Filter(
+                type = FilterType.ASSIGNABLE_TYPE,
+                classes = {com.mbotamapay.config.RateLimitFilter.class}
+        ))
 @Import(SecurityConfig.class)
 class PaymentControllerTest {
 
@@ -46,6 +57,18 @@ class PaymentControllerTest {
 
     @MockBean
     private TokenBlacklistService tokenBlacklistService;
+
+    @MockBean
+    private JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @MockBean
+    private FeexPayGateway feexPayGateway;
+
+    @MockBean
+    private CinetPayGateway cinetPayGateway;
+
+    @MockBean
+    private PayTechGateway payTechGateway;
 
     @Test
     @DisplayName("Get platforms should return available platforms")
