@@ -17,40 +17,42 @@ services:
       - key: DATABASE_USERNAME
         value: "neondb_owner"
       - key: DATABASE_PASSWORD
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: JWT_SECRET
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
         previewValue: "change-me-in-render"
       - key: CORS_ORIGINS
         value: "https://mbotamapay.com,https://v0-mbotama-pay.vercel.app"
+      - key: CORS_ORIGIN_PATTERNS
+        value: "https://*.vercel.app,https://mbotamapay.com"
       - key: MAIL_HOST
         value: "smtp.gmail.com"
       - key: MAIL_PORT
         value: "587"
       - key: MAIL_USERNAME
-        value: ""
+        sync: false  # Set this in Render Dashboard
       - key: MAIL_PASSWORD
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: FEEXPAY_API_URL
         value: "https://api.feexpay.me"
       - key: FEEXPAY_API_KEY
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: FEEXPAY_SHOP_ID
-        value: ""
+        sync: false  # Set this in Render Dashboard
       - key: CINETPAY_API_URL
         value: "https://api-checkout.cinetpay.com/v2"
       - key: CINETPAY_API_KEY
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: CINETPAY_SITE_ID
-        value: ""
+        sync: false  # Set this in Render Dashboard
       - key: PAYTECH_API_URL
         value: "https://paytech.sn/api"
       - key: PAYTECH_API_KEY
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: PAYTECH_API_SECRET
-        value: ""
+        sync: false  # Set this in Render Dashboard as a secret
       - key: APP_BASE_URL
-        value: ""
+        sync: false  # Set this in Render Dashboard
         previewValue: "https://mbotamapay-backend.onrender.com"
       - key: APP_FRONTEND_URL
         value: "https://v0-mbotama-pay.vercel.app"
