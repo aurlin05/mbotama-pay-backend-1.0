@@ -65,6 +65,11 @@ management:
   endpoint:
     health:
       show-details: never
+  health:
+    mail:
+      enabled: false
+    smtp:
+      enabled: false
 
 # Logging
 logging:
