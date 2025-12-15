@@ -6,8 +6,7 @@ services:
     region: oregon
     autoDeploy: true
     healthCheckPath: /api/v1/actuator/health
-    buildCommand: ./gradlew clean bootJar
-    startCommand: java -XX:ActiveProcessorCount=2 -jar build/libs/mbotamapay-backend.jar
+    dockerfilePath: Dockerfile
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: prod
