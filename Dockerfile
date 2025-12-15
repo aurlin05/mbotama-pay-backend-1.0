@@ -1,7 +1,7 @@
 FROM gradle:8.5-jdk21 AS build
 WORKDIR /workspace/mbotama-pay-backend-1.0
 COPY . .
-RUN chmod +x gradlew && ./gradlew clean bootJar
+RUN chmod +x gradlew && ./gradlew clean test bootJar
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
