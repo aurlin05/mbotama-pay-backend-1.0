@@ -2,8 +2,10 @@ package com.mbotamapay.controller;
 
 import com.mbotamapay.dto.ApiResponse;
 import com.mbotamapay.dto.user.UpdateProfileRequest;
+import com.mbotamapay.dto.user.UserLimitsResponse;
 import com.mbotamapay.dto.user.UserProfileResponse;
 import com.mbotamapay.entity.User;
+import com.mbotamapay.service.TransactionLimitsService;
 import com.mbotamapay.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -25,6 +27,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final TransactionLimitsService transactionLimitsService;
 
     @GetMapping("/me")
     @Operation(summary = "Get current user profile", description = "Returns the profile of the authenticated user")
@@ -52,6 +55,20 @@ public class UserController {
                 user.getKycLevel().getDisplayName(),
                 user.getTransactionLimit());
         return ResponseEntity.ok(ApiResponse.success(info));
+    }
+
+    @GetMapping("/me/limits")
+    @Operation(
+        summary = "Get detailed transaction limits", 
+        description = "Returns comprehensive information about transaction limits including daily, monthly, and corridor-specific limits"
+    )
+    public ResponseEntity<ApiResponse<UserLimitsResponse>> getDetailedLimits(
+            @AuthenticationPrincipal User user) {
+        UserLimitsResponse limits = transactionLimitsService.getDetailedUserLimits(user);
+        return ResponseEntity.ok(ApiResponse.success(
+                "Limites de transaction récupérées avec succès", 
+                limits
+        ));
     }
 
     record TransactionLimitInfo(String kycLevel, String kycLevelDisplayName, Long transactionLimit) {

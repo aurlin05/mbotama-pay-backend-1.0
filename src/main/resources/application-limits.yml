@@ -1,0 +1,107 @@
+# Configuration des limites de transaction
+# Protection anti-requalification en établissement de paiement
+
+limits:
+  # Plafonds par transaction
+  transaction:
+    minimum: 500                    # 500 FCFA minimum
+    maximum-standard: 100000        # 100,000 FCFA pour corridor standard
+    maximum-premium: 200000         # 200,000 FCFA pour corridor premium
+    absolute-maximum: 200000        # 200,000 FCFA absolu (JAMAIS dépassé)
+
+  # Plafonds quotidiens par niveau KYC
+  daily:
+    level0: 0                       # KYC Niveau 0 : Transactions bloquées
+    level1: 300000                  # KYC Niveau 1 : 300,000 FCFA/jour
+    level2: 500000                  # KYC Niveau 2 : 500,000 FCFA/jour
+
+  # Mode double passerelle (désactivé par défaut)
+  dual-gateway:
+    enabled: false                  # Activer uniquement si nécessaire
+    max-amount: 50000               # Maximum 50,000 FCFA en mode dual
+    min-technical-balance: 100000   # Solde technique minimum requis
+    max-latency-ms: 5000            # Latence maximum 5 secondes
+    max-api-errors: 3               # Maximum 3 erreurs API/24h
+    require-full-logs: true         # Logs complets obligatoires
+
+  # Configuration par corridor
+  corridors:
+    # Sénégal -> Sénégal (local)
+    SN-SN:
+      code: "SN-SN"
+      daily-limit: 2000000          # 2M FCFA/jour
+      max-per-transaction: 200000   # 200k FCFA/transaction
+      max-transactions-per-day: 100
+      preferred-gateway: "WAVE"
+      gateway-reliability: 0.98
+      enabled: true
+
+    # Sénégal -> Côte d'Ivoire
+    SN-CI:
+      code: "SN-CI"
+      daily-limit: 1500000          # 1.5M FCFA/jour
+      max-per-transaction: 150000   # 150k FCFA/transaction
+      max-transactions-per-day: 50
+      preferred-gateway: "ORANGE_MONEY"
+      gateway-reliability: 0.95
+      enabled: true
+
+    # Sénégal -> Mali
+    SN-ML:
+      code: "SN-ML"
+      daily-limit: 1000000          # 1M FCFA/jour
+      max-per-transaction: 100000   # 100k FCFA/transaction
+      max-transactions-per-day: 50
+      preferred-gateway: "ORANGE_MONEY"
+      gateway-reliability: 0.92
+      enabled: true
+
+    # Sénégal -> Burkina Faso
+    SN-BF:
+      code: "SN-BF"
+      daily-limit: 1000000
+      max-per-transaction: 100000
+      max-transactions-per-day: 50
+      preferred-gateway: "ORANGE_MONEY"
+      gateway-reliability: 0.90
+      enabled: true
+
+    # Côte d'Ivoire -> Côte d'Ivoire (local)
+    CI-CI:
+      code: "CI-CI"
+      daily-limit: 2000000
+      max-per-transaction: 200000
+      max-transactions-per-day: 100
+      preferred-gateway: "WAVE"
+      gateway-reliability: 0.98
+      enabled: true
+
+    # Côte d'Ivoire -> Sénégal
+    CI-SN:
+      code: "CI-SN"
+      daily-limit: 1500000
+      max-per-transaction: 150000
+      max-transactions-per-day: 50
+      preferred-gateway: "WAVE"
+      gateway-reliability: 0.95
+      enabled: true
+
+    # Mali -> Mali (local)
+    ML-ML:
+      code: "ML-ML"
+      daily-limit: 1500000
+      max-per-transaction: 150000
+      max-transactions-per-day: 75
+      preferred-gateway: "ORANGE_MONEY"
+      gateway-reliability: 0.93
+      enabled: true
+
+    # Burkina Faso -> Burkina Faso (local)
+    BF-BF:
+      code: "BF-BF"
+      daily-limit: 1500000
+      max-per-transaction: 150000
+      max-transactions-per-day: 75
+      preferred-gateway: "ORANGE_MONEY"
+      gateway-reliability: 0.91
+      enabled: true

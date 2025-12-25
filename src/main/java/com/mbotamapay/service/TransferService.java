@@ -45,6 +45,7 @@ public class TransferService {
 
     private final PaymentRoutingService routingService;
     private final FeeCalculator feeCalculator;
+    private final TransactionLimitsService transactionLimitsService;
     private final TransactionRepository transactionRepository;
     private final UserRepository userRepository;
     private final GatewayStockRepository stockRepository;
@@ -62,10 +63,7 @@ public class TransferService {
         User sender = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
-        // 2. Vérifier les limites
-        validateTransactionLimits(sender, request.getAmount());
-
-        // 3. Déterminer la route
+        // 2. Déterminer la route
         RoutingDecision routing = routingService.determineRoute(
                 request.getSenderPhone(),
                 request.getRecipientPhone(),
@@ -74,6 +72,9 @@ public class TransferService {
         if (!routing.isRouteFound()) {
             throw new BadRequestException("Aucune route disponible: " + routing.getRoutingReason());
         }
+
+        // 3. Vérifier les limites (avec le nouveau service de limites qui inclut les limites par corridor)
+        validateTransactionLimits(sender, request.getAmount(), routing);
 
         // 4. Créer la transaction
         String reference = generateReference();
@@ -150,26 +151,21 @@ public class TransferService {
                 .build();
     }
 
-    private void validateTransactionLimits(User sender, Long amount) {
-        // Vérifier le niveau KYC
-        if (sender.getKycLevel() == null || sender.getKycLevel().name().equals("NONE")) {
-            throw new BadRequestException(
-                    "Vérification d'identité requise. Complétez votre KYC pour envoyer de l'argent.");
-        }
-
-        // Vérifier les limites mensuelles
-        long limit = sender.getTransactionLimit();
-        LocalDateTime thirtyDaysAgo = LocalDateTime.now().minusDays(30);
-        Long usedAmount = transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
-                sender.getId(), thirtyDaysAgo);
-        if (usedAmount == null)
-            usedAmount = 0L;
-
-        if (usedAmount + amount > limit) {
-            throw new BadRequestException(String.format(
-                    "Limite de transaction dépassée. Limite: %d FCFA, Utilisé: %d FCFA, Disponible: %d FCFA",
-                    limit, usedAmount, limit - usedAmount));
-        }
+    /**
+     * Valider les limites de transaction (utilise le service de limites dédié)
+     */
+    private void validateTransactionLimits(User sender, Long amount, RoutingDecision routing) {
+        // Utiliser le service de limites pour une validation complète
+        // incluant les limites par transaction, quotidiennes, mensuelles et par corridor
+        transactionLimitsService.validateTransaction(
+                sender, 
+                amount, 
+                routing.getSourceCountry(), 
+                routing.getDestCountry()
+        );
+        
+        log.info("Transaction limits validated successfully for user={}, amount={}, corridor={}-{}", 
+                sender.getId(), amount, routing.getSourceCountry(), routing.getDestCountry());
     }
 
     private Transaction createTransaction(User sender, TransferRequest request,
