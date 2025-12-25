@@ -26,6 +26,7 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
     private final TemplateEngine templateEngine;
+    private final SendGridEmailClient sendGridEmailClient;
 
     @Value("${spring.mail.username:noreply@mbotamapay.com}")
     private String fromEmail;
@@ -35,6 +36,9 @@ public class EmailService {
 
     @Value("${otp.expiration:300}")
     private int otpExpirationSeconds;
+    
+    @Value("${email.provider:smtp}")
+    private String emailProvider;
 
     /**
      * Send OTP verification email
@@ -141,15 +145,21 @@ public class EmailService {
      * Send email with HTML content
      */
     private void sendEmail(String to, String subject, String htmlContent) {
+        if ("sendgrid".equalsIgnoreCase(emailProvider)) {
+            boolean ok = sendGridEmailClient.sendHtml(fromEmail, appName, to, subject, htmlContent);
+            if (ok) {
+                log.info("Email sent successfully to: {}", to);
+                return;
+            }
+            log.warn("SendGrid send failed for {}, falling back to SMTP", to);
+        }
         try {
             MimeMessage message = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
-
             helper.setFrom(fromEmail, appName);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(htmlContent, true);
-
             mailSender.send(message);
             log.info("Email sent successfully to: {}", to);
         } catch (MessagingException e) {

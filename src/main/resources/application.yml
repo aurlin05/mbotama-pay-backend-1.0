@@ -115,6 +115,11 @@ app:
   base-url: ${APP_BASE_URL:http://localhost:8080}
   frontend-url: ${APP_FRONTEND_URL:http://localhost:3000}
 
+email:
+  provider: ${EMAIL_PROVIDER:smtp}
+sendgrid:
+  api-key: ${SENDGRID_API_KEY:}
+
 # Payment Gateways Configuration
 gateway:
   # FeexPay - https://feexpay.me
