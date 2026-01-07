@@ -26,7 +26,7 @@ public class EmailService {
 
     private final JavaMailSender mailSender;
     private final TemplateEngine templateEngine;
-    private final SendGridEmailClient sendGridEmailClient;
+    private final BrevoEmailClient brevoEmailClient;
 
     @Value("${spring.mail.username:noreply@mbotamapay.com}")
     private String fromEmail;
@@ -36,7 +36,7 @@ public class EmailService {
 
     @Value("${otp.expiration:300}")
     private int otpExpirationSeconds;
-    
+
     @Value("${email.provider:smtp}")
     private String emailProvider;
 
@@ -145,13 +145,13 @@ public class EmailService {
      * Send email with HTML content
      */
     private void sendEmail(String to, String subject, String htmlContent) {
-        if ("sendgrid".equalsIgnoreCase(emailProvider)) {
-            boolean ok = sendGridEmailClient.sendHtml(fromEmail, appName, to, subject, htmlContent);
+        if ("brevo".equalsIgnoreCase(emailProvider)) {
+            boolean ok = brevoEmailClient.sendHtml(fromEmail, appName, to, subject, htmlContent);
             if (ok) {
-                log.info("Email sent successfully to: {}", to);
+                log.info("Email sent successfully via Brevo to: {}", to);
                 return;
             }
-            log.warn("SendGrid send failed for {}, falling back to SMTP", to);
+            log.warn("Brevo send failed for {}, falling back to SMTP", to);
         }
         try {
             MimeMessage message = mailSender.createMimeMessage();

@@ -118,9 +118,9 @@ app:
   frontend-url: ${APP_FRONTEND_URL:http://localhost:3000}
 
 email:
-  provider: ${EMAIL_PROVIDER:smtp}
-sendgrid:
-  api-key: ${SENDGRID_API_KEY:}
+  provider: ${EMAIL_PROVIDER:brevo}
+brevo:
+  api-key: ${BREVO_API_KEY:}
 
 # Payment Gateways Configuration
 gateway:
