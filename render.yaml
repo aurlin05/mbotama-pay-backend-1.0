@@ -34,8 +34,8 @@ services:
       - key: MAIL_PASSWORD
         sync: false  # Set this in Render Dashboard as a secret
       - key: EMAIL_PROVIDER
-        value: "sendgrid"
-      - key: SENDGRID_API_KEY
+        value: "brevo"
+      - key: BREVO_API_KEY
         sync: false  # Set this in Render Dashboard as a secret
       - key: TWILIO_ACCOUNT_SID
         sync: false  # Set this in Render Dashboard as a secret
