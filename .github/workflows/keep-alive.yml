@@ -2,7 +2,7 @@ name: Keep Render Backend Alive
 
 on:
   schedule:
-    - cron: "*/5 * * * *" # toutes les 5 minutes
+    - cron: "*/10 * * * *" # toutes les 5 minutes
   workflow_dispatch:
 
 jobs:
@@ -12,4 +12,10 @@ jobs:
     steps:
       - name: Ping backend
         run: |
-          curl -s -o /dev/null -w "%{http_code}" https://mbotamapay-backend.onrender.com/health
+          response=$(curl -s -o /dev/null -w "%{http_code}" https://mbotamapay-backend.onrender.com/api/v1/actuator/health)
+          echo "Health check response: $response"
+          if [ "$response" != "200" ]; then
+            echo "Health check failed with status: $response"
+            exit 1
+          fi
+          echo "Health check passed!"
