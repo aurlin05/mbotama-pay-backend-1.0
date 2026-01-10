@@ -5,6 +5,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.math.BigDecimal;
+import java.util.List;
+
 /**
  * Réponse de preview de transfert
  * Montre les frais et la route avant exécution
@@ -84,4 +87,56 @@ public class TransferPreviewResponseDto {
      * Message si non disponible
      */
     private String reason;
+
+    // === Routing Info ===
+
+    /**
+     * Stratégie de routage (SINGLE, SINGLE_WITH_FALLBACK, SPLIT, BRIDGE)
+     */
+    private String routingStrategy;
+
+    /**
+     * Score de la route (0-100)
+     */
+    private Integer routingScore;
+
+    /**
+     * Gateways de fallback disponibles
+     */
+    private List<String> fallbackGateways;
+
+    // === Bridge Routing Info ===
+
+    /**
+     * True si c'est un paiement via pont
+     */
+    private boolean isBridgePayment;
+
+    /**
+     * Description de la route bridge (ex: "SN → CI → CG")
+     */
+    private BridgeRouteDto bridgeRoute;
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BridgeRouteDto {
+        private String routeDescription;
+        private List<String> bridgeCountries;
+        private int hopCount;
+        private BigDecimal totalFeePercent;
+        private List<BridgeLegDto> legs;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class BridgeLegDto {
+        private String from;
+        private String to;
+        private String gateway;
+        private BigDecimal feePercent;
+    }
 }

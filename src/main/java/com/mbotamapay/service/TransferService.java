@@ -348,8 +348,14 @@ public class TransferService {
 
     /**
      * Prévisualise un transfert sans l'exécuter
+     * Utilise le SmartPaymentOrchestrator pour supporter le bridge routing
      */
     public TransferPreview previewTransfer(String senderPhone, String recipientPhone, Long amount) {
+        if (useSmartOrchestrator) {
+            return previewWithSmartOrchestrator(senderPhone, recipientPhone, amount);
+        }
+        
+        // Fallback sur l'ancien système
         RoutingDecision routing = routingService.determineRoute(senderPhone, recipientPhone, amount);
 
         if (!routing.isRouteFound()) {
@@ -374,6 +380,83 @@ public class TransferService {
                 .destCountry(routing.getDestCountry().getDisplayName())
                 .useStock(routing.isUseStock())
                 .build();
+    }
+
+    /**
+     * Preview avec le SmartPaymentOrchestrator (supporte bridge routing)
+     */
+    private TransferPreview previewWithSmartOrchestrator(String senderPhone, String recipientPhone, Long amount) {
+        OrchestrationRequest orchRequest = OrchestrationRequest.builder()
+                .senderPhone(senderPhone)
+                .recipientPhone(recipientPhone)
+                .amount(amount)
+                .currency("XOF")
+                .build();
+
+        OrchestrationResult orchestration = orchestrator.orchestrate(orchRequest);
+
+        if (!orchestration.isSuccess()) {
+            return TransferPreview.builder()
+                    .available(false)
+                    .reason(orchestration.getErrorMessage())
+                    .build();
+        }
+
+        FeeBreakdown fees = orchestration.getFees();
+        RoutingStrategy strategy = orchestration.getStrategy();
+
+        TransferPreview.TransferPreviewBuilder builder = TransferPreview.builder()
+                .available(true)
+                .amount(amount)
+                .fee(fees != null ? fees.getTotalFee() : 0L)
+                .totalAmount(amount + (fees != null ? fees.getTotalFee() : 0L))
+                .displayFeePercent(fees != null ? fees.getDisplayPercent() : 0)
+                .gatewayFee(fees != null ? fees.getGatewayFee() : 0L)
+                .appFee(fees != null ? fees.getAppFee() : 0L)
+                .sourceCountry(orchestration.getSourceCountry().getDisplayName())
+                .destCountry(orchestration.getDestCountry().getDisplayName())
+                .routingStrategy(strategy.getType().name())
+                .routingScore(strategy.getPrimaryScore())
+                .useStock(strategy.isUseStock());
+
+        // Infos gateway selon le type de stratégie
+        if (orchestration.isBridgePayment() && orchestration.getBridgeRoute() != null) {
+            // Bridge routing
+            var bridgeRoute = orchestration.getBridgeRoute();
+            builder.gateway("Bridge via " + bridgeRoute.getBridgeCountries().stream()
+                    .map(Country::getIsoCode)
+                    .collect(java.util.stream.Collectors.joining(" → ")))
+                    .isBridgePayment(true)
+                    .bridgeRouteDescription(bridgeRoute.getRouteDescription())
+                    .bridgeCountries(bridgeRoute.getBridgeCountries().stream()
+                            .map(Country::getIsoCode)
+                            .collect(java.util.stream.Collectors.toList()))
+                    .bridgeHopCount(bridgeRoute.getHopCount())
+                    .bridgeTotalFeePercent(bridgeRoute.getTotalFeePercent())
+                    .bridgeLegs(bridgeRoute.getLegs().stream()
+                            .map(leg -> BridgeLegPreview.builder()
+                                    .from(leg.getFrom().getIsoCode())
+                                    .to(leg.getTo().getIsoCode())
+                                    .gateway(leg.getGateway().getDisplayName())
+                                    .feePercent(leg.getFeePercent())
+                                    .build())
+                            .collect(java.util.stream.Collectors.toList()));
+        } else {
+            // Route directe
+            builder.gateway(strategy.getPrimaryGateway() != null 
+                    ? strategy.getPrimaryGateway().getDisplayName() 
+                    : "N/A");
+            
+            // Fallback gateways
+            if (strategy.getOrderedGateways() != null && strategy.getOrderedGateways().size() > 1) {
+                builder.fallbackGateways(strategy.getOrderedGateways().stream()
+                        .skip(1)
+                        .map(GatewayType::getDisplayName)
+                        .collect(java.util.stream.Collectors.toList()));
+            }
+        }
+
+        return builder.build();
     }
 
     /**
@@ -523,5 +606,27 @@ public class TransferService {
         private String destOperatorName;
         private boolean useStock;
         private String reason;
+        // Routing info
+        private String routingStrategy;
+        private Integer routingScore;
+        private List<String> fallbackGateways;
+        // Bridge routing info
+        private boolean isBridgePayment;
+        private String bridgeRouteDescription;
+        private List<String> bridgeCountries;
+        private Integer bridgeHopCount;
+        private java.math.BigDecimal bridgeTotalFeePercent;
+        private List<BridgeLegPreview> bridgeLegs;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class BridgeLegPreview {
+        private String from;
+        private String to;
+        private String gateway;
+        private java.math.BigDecimal feePercent;
     }
 }

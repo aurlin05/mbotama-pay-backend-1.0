@@ -115,7 +115,7 @@ public class TransferController {
 
     private TransferPreviewResponseDto mapToPreviewResponse(TransferPreview preview,
             String sourceOperator, String destOperator) {
-        return TransferPreviewResponseDto.builder()
+        TransferPreviewResponseDto.TransferPreviewResponseDtoBuilder builder = TransferPreviewResponseDto.builder()
                 .available(preview.isAvailable())
                 .amount(preview.getAmount())
                 .fee(preview.getFee())
@@ -130,7 +130,30 @@ public class TransferController {
                 .destOperatorName(getOperatorDisplayName(destOperator))
                 .useStock(preview.isUseStock())
                 .reason(preview.getReason())
-                .build();
+                .routingStrategy(preview.getRoutingStrategy())
+                .routingScore(preview.getRoutingScore())
+                .fallbackGateways(preview.getFallbackGateways())
+                .isBridgePayment(preview.isBridgePayment());
+
+        // Bridge routing info
+        if (preview.isBridgePayment() && preview.getBridgeLegs() != null) {
+            builder.bridgeRoute(TransferPreviewResponseDto.BridgeRouteDto.builder()
+                    .routeDescription(preview.getBridgeRouteDescription())
+                    .bridgeCountries(preview.getBridgeCountries())
+                    .hopCount(preview.getBridgeHopCount() != null ? preview.getBridgeHopCount() : 0)
+                    .totalFeePercent(preview.getBridgeTotalFeePercent())
+                    .legs(preview.getBridgeLegs().stream()
+                            .map(leg -> TransferPreviewResponseDto.BridgeLegDto.builder()
+                                    .from(leg.getFrom())
+                                    .to(leg.getTo())
+                                    .gateway(leg.getGateway())
+                                    .feePercent(leg.getFeePercent())
+                                    .build())
+                            .collect(java.util.stream.Collectors.toList()))
+                    .build());
+        }
+
+        return builder.build();
     }
 
     private TransferResponseDto mapToTransferResponse(TransferResult result,
