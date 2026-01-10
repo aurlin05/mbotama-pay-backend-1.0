@@ -29,7 +29,8 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
 
     private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
             Country.COTE_DIVOIRE, Country.SENEGAL, Country.MALI, Country.GUINEA,
-            Country.CAMEROON, Country.BURKINA_FASO, Country.BENIN, Country.TOGO, Country.NIGER);
+            Country.CAMEROON, Country.BURKINA_FASO, Country.BENIN, Country.TOGO, 
+            Country.NIGER, Country.DRC);
 
     @Value("${gateway.cinetpay.api-url:https://api-checkout.cinetpay.com/v2}")
     private String apiUrl;
@@ -315,6 +316,10 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
                 case BURKINA_FASO -> "226";
                 case BENIN -> "229";
                 case TOGO -> "228";
+                case GUINEA -> "224";
+                case NIGER -> "227";
+                case DRC -> "243";
+                case NIGERIA -> "234";
                 default -> country.getPhonePrefix();
             };
         }

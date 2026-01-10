@@ -29,7 +29,7 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
 
     private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
             Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
-            Country.SENEGAL, Country.CONGO_BRAZZAVILLE, Country.BURKINA_FASO);
+            Country.CONGO_BRAZZAVILLE);
 
     @Value("${gateway.feexpay.api-url:https://api.feexpay.me}")
     private String apiUrl;
@@ -269,10 +269,11 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
 
     private String getPayoutEndpoint(Country country, MobileOperator operator) {
         return switch (country) {
-            case BENIN ->
-                operator == MobileOperator.MTN_BJ ? "/api/payouts/public/mtn_bj" : "/api/payouts/public/moov_bj";
-            case SENEGAL ->
-                operator == MobileOperator.ORANGE_SN ? "/api/payouts/public/orange_sn" : "/api/payouts/public/free_sn";
+            case BENIN -> {
+                if (operator == MobileOperator.MTN_BJ) yield "/api/payouts/public/mtn_bj";
+                if (operator == MobileOperator.CELTIIS_BJ) yield "/api/payouts/public/celtiis_bj";
+                yield "/api/payouts/public/moov_bj";
+            }
             case COTE_DIVOIRE -> {
                 if (operator == MobileOperator.ORANGE_CI)
                     yield "/api/payouts/public/orange_ci";
@@ -282,8 +283,7 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
                     yield "/api/payouts/public/wave_ci";
                 yield "/api/payouts/public/moov_ci";
             }
-            case TOGO -> "/api/payouts/public/togocom";
-            case BURKINA_FASO -> "/api/payouts/public/orange_bf";
+            case TOGO -> operator == MobileOperator.MOOV_TG ? "/api/payouts/public/moov_tg" : "/api/payouts/public/togocom_tg";
             case CONGO_BRAZZAVILLE -> "/api/payouts/public/mtn_cg";
             default -> "/api/payouts/public/default";
         };

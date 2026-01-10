@@ -149,6 +149,20 @@ routing:
   stock-threshold-alert: 100000
   auto-config:
     enabled: false
+  # Smart Orchestrator Settings
+  use-smart-orchestrator: true
+  max-retries: 3
+  split-threshold: 5000000  # 5M XOF - au-delà, split entre gateways
+  min-score-threshold: 30   # Score minimum pour considérer une route
+  prefer-same-gateway: true
+  # Scoring Weights (total = 100)
+  score:
+    weight:
+      cost: 30        # Importance des frais
+      reliability: 30 # Importance de la fiabilité
+      speed: 15       # Importance de la vitesse
+      stock: 15       # Importance du stock disponible
+      operator: 10    # Importance du support opérateur
 
 # Fee Configuration
 fees:

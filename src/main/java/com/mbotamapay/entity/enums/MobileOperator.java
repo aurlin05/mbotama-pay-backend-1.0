@@ -22,8 +22,8 @@ public enum MobileOperator {
 
     // Sénégal
     ORANGE_SN("Orange Sénégal", Country.SENEGAL, "77",
-            EnumSet.of(GatewayType.FEEXPAY, GatewayType.PAYTECH, GatewayType.CINETPAY)),
-    FREE_SN("Free Sénégal", Country.SENEGAL, "76", EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY)),
+            EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY)),
+    FREE_SN("Free Sénégal", Country.SENEGAL, "76", EnumSet.of(GatewayType.CINETPAY)),
     WAVE_SN("Wave Sénégal", Country.SENEGAL, "78", EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY)),
 
     // Côte d'Ivoire
@@ -42,15 +42,28 @@ public enum MobileOperator {
     MOOV_ML("Moov Mali", Country.MALI, "6", EnumSet.of(GatewayType.CINETPAY)),
 
     // Burkina Faso
-    ORANGE_BF("Orange Burkina", Country.BURKINA_FASO, "07", EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY)),
-    MOOV_BF("Moov Burkina", Country.BURKINA_FASO, "06", EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY)),
+    ORANGE_BF("Orange Burkina", Country.BURKINA_FASO, "07", EnumSet.of(GatewayType.CINETPAY)),
+    MOOV_BF("Moov Burkina", Country.BURKINA_FASO, "06", EnumSet.of(GatewayType.CINETPAY)),
 
     // Congo-Brazzaville
     MTN_CG("MTN Congo", Country.CONGO_BRAZZAVILLE, "06", EnumSet.of(GatewayType.FEEXPAY)),
 
     // Cameroun
     ORANGE_CM("Orange Cameroun", Country.CAMEROON, "69", EnumSet.of(GatewayType.CINETPAY)),
-    MTN_CM("MTN Cameroun", Country.CAMEROON, "67", EnumSet.of(GatewayType.CINETPAY));
+    MTN_CM("MTN Cameroun", Country.CAMEROON, "67", EnumSet.of(GatewayType.CINETPAY)),
+
+    // Guinée
+    ORANGE_GN("Orange Guinée", Country.GUINEA, "62", EnumSet.of(GatewayType.CINETPAY)),
+    MTN_GN("MTN Guinée", Country.GUINEA, "66", EnumSet.of(GatewayType.CINETPAY)),
+
+    // Niger
+    AIRTEL_NE("Airtel Niger", Country.NIGER, "97", EnumSet.of(GatewayType.CINETPAY)),
+    MOOV_NE("Moov Niger", Country.NIGER, "90", EnumSet.of(GatewayType.CINETPAY)),
+
+    // RD Congo
+    ORANGE_CD("Orange RDC", Country.DRC, "89", EnumSet.of(GatewayType.CINETPAY)),
+    VODACOM_CD("Vodacom RDC", Country.DRC, "81", EnumSet.of(GatewayType.CINETPAY)),
+    AIRTEL_CD("Airtel RDC", Country.DRC, "99", EnumSet.of(GatewayType.CINETPAY));
 
     private final String displayName;
     private final Country country;

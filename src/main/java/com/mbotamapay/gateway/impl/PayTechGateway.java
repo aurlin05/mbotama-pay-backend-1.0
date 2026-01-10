@@ -27,7 +27,7 @@ public class PayTechGateway implements PaymentGateway, PayoutGateway {
     private static final String PLATFORM_NAME = "paytech";
 
     private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
-            Country.SENEGAL, Country.COTE_DIVOIRE, Country.MALI, Country.BENIN);
+            Country.SENEGAL, Country.COTE_DIVOIRE, Country.MALI);
 
     @Value("${gateway.paytech.api-url:https://paytech.sn/api}")
     private String apiUrl;

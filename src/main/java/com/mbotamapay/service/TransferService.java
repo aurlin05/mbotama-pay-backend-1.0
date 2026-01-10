@@ -17,8 +17,11 @@ import com.mbotamapay.gateway.dto.PayoutResponse;
 import com.mbotamapay.repository.GatewayStockRepository;
 import com.mbotamapay.repository.TransactionRepository;
 import com.mbotamapay.repository.UserRepository;
+import com.mbotamapay.service.orchestration.*;
+import com.mbotamapay.service.orchestration.SmartPaymentOrchestrator.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,17 +35,17 @@ import java.util.UUID;
  * 
  * Flux:
  * 1. Valider l'utilisateur et les limites
- * 2. Déterminer la route optimale
- * 3. Calculer les frais
- * 4. Créer la transaction
- * 5. Exécuter le payout
- * 6. Mettre à jour le stock si nécessaire
+ * 2. Utiliser SmartPaymentOrchestrator pour le routage intelligent
+ * 3. Exécuter avec fallback automatique
+ * 4. Enregistrer les métriques
  */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class TransferService {
 
+    private final SmartPaymentOrchestrator orchestrator;
+    private final RoutingAnalytics analytics;
     private final PaymentRoutingService routingService;
     private final FeeCalculator feeCalculator;
     private final TransactionLimitsService transactionLimitsService;
@@ -51,8 +54,11 @@ public class TransferService {
     private final GatewayStockRepository stockRepository;
     private final List<PayoutGateway> payoutGateways;
 
+    @Value("${routing.use-smart-orchestrator:true}")
+    private boolean useSmartOrchestrator;
+
     /**
-     * Exécute un transfert complet
+     * Exécute un transfert complet avec orchestration intelligente
      */
     @Transactional
     public TransferResult executeTransfer(Long userId, TransferRequest request) {
@@ -63,7 +69,126 @@ public class TransferService {
         User sender = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
-        // 2. Déterminer la route
+        // 2. Utiliser l'orchestrateur intelligent ou le routage classique
+        if (useSmartOrchestrator) {
+            return executeWithSmartOrchestrator(sender, request);
+        } else {
+            return executeWithClassicRouting(sender, request);
+        }
+    }
+
+    /**
+     * Exécution avec l'orchestrateur intelligent (fallback, scoring, métriques)
+     */
+    private TransferResult executeWithSmartOrchestrator(User sender, TransferRequest request) {
+        // 1. Orchestrer le routage
+        OrchestrationRequest orchRequest = OrchestrationRequest.builder()
+                .senderPhone(request.getSenderPhone())
+                .recipientPhone(request.getRecipientPhone())
+                .recipientName(request.getRecipientName())
+                .amount(request.getAmount())
+                .currency("XOF")
+                .description(request.getDescription())
+                .build();
+
+        OrchestrationResult orchestration = orchestrator.orchestrate(orchRequest);
+
+        if (!orchestration.isSuccess()) {
+            throw new BadRequestException("Routage impossible: " + orchestration.getErrorMessage());
+        }
+
+        // 2. Vérifier les limites
+        transactionLimitsService.validateTransaction(
+                sender,
+                request.getAmount(),
+                orchestration.getSourceCountry(),
+                orchestration.getDestCountry()
+        );
+
+        // 3. Créer la transaction
+        String reference = generateReference();
+        Transaction transaction = createTransactionFromOrchestration(sender, request, orchestration, reference);
+        transaction = transactionRepository.save(transaction);
+
+        log.info("Transaction created: id={}, strategy={}, primaryGateway={}",
+                transaction.getId(),
+                orchestration.getStrategy().getType(),
+                orchestration.getStrategy().getPrimaryGateway());
+
+        // 4. Exécuter avec fallback automatique
+        PayoutRequest payoutRequest = buildPayoutRequest(request, orchestration, reference);
+        PayoutExecutionResult execResult = orchestrator.executeWithFallback(orchestration, payoutRequest);
+
+        // 5. Mettre à jour la transaction et enregistrer les métriques
+        if (execResult.isSuccess()) {
+            transaction.setStatus(TransactionStatus.PENDING);
+            transaction.setExternalReference(execResult.getResponse().getExternalReference());
+            transaction.setPayoutGateway(execResult.getGateway());
+
+            // Enregistrer le succès dans les analytics
+            analytics.recordSuccess(
+                    execResult.getGateway(),
+                    orchestration.getSourceCountry(),
+                    orchestration.getDestCountry(),
+                    request.getAmount(),
+                    transaction.getFee(),
+                    execResult.getExecutionTimeMs()
+            );
+
+            // Log si fallback utilisé
+            if (execResult.getAttemptNumber() > 1) {
+                log.info("Transfer succeeded after {} attempts (fallback used)", execResult.getAttemptNumber());
+                for (FailedAttempt failed : execResult.getFailedAttempts()) {
+                    analytics.recordFallback(
+                            failed.getGateway(),
+                            execResult.getGateway(),
+                            orchestration.getSourceCountry(),
+                            orchestration.getDestCountry(),
+                            failed.getReason()
+                    );
+                }
+            }
+        } else {
+            transaction.setStatus(TransactionStatus.FAILED);
+            transaction.setDescription("Payout failed after " + execResult.getTotalAttempts() + " attempts: " + 
+                    execResult.getErrorMessage());
+
+            // Enregistrer l'échec
+            for (FailedAttempt failed : execResult.getFailedAttempts()) {
+                analytics.recordFailure(
+                        failed.getGateway(),
+                        orchestration.getSourceCountry(),
+                        orchestration.getDestCountry(),
+                        request.getAmount(),
+                        failed.getReason()
+                );
+            }
+        }
+
+        transactionRepository.save(transaction);
+
+        return TransferResult.builder()
+                .success(execResult.isSuccess())
+                .transactionId(transaction.getId())
+                .reference(reference)
+                .amount(request.getAmount())
+                .fee(transaction.getFee())
+                .totalAmount(transaction.getTotalAmount())
+                .displayFeePercent(orchestration.getFees() != null ? orchestration.getFees().getDisplayPercent() : 0)
+                .status(transaction.getStatus().name())
+                .routingReason(buildRoutingReason(orchestration, execResult))
+                .message(execResult.isSuccess() ? "Transfert initié avec succès" : execResult.getErrorMessage())
+                .gateway(execResult.getGateway() != null ? execResult.getGateway().getDisplayName() : null)
+                .sourceCountry(orchestration.getSourceCountry().getDisplayName())
+                .destCountry(orchestration.getDestCountry().getDisplayName())
+                .build();
+    }
+
+    /**
+     * Exécution classique (sans orchestrateur intelligent)
+     */
+    private TransferResult executeWithClassicRouting(User sender, TransferRequest request) {
+        // Ancien code de routage
         RoutingDecision routing = routingService.determineRoute(
                 request.getSenderPhone(),
                 request.getRecipientPhone(),
@@ -73,27 +198,18 @@ public class TransferService {
             throw new BadRequestException("Aucune route disponible: " + routing.getRoutingReason());
         }
 
-        // 3. Vérifier les limites (avec le nouveau service de limites qui inclut les limites par corridor)
         validateTransactionLimits(sender, request.getAmount(), routing);
 
-        // 4. Créer la transaction
         String reference = generateReference();
         Transaction transaction = createTransaction(sender, request, routing, reference);
         transaction = transactionRepository.save(transaction);
 
-        log.info("Transaction created: id={}, gateway={}, fees={}%",
-                transaction.getId(), routing.getCollectionGateway(),
-                routing.getFees().getDisplayPercent());
-
-        // 5. Exécuter le payout
         PayoutResponse payoutResult = executePayout(routing, request, reference);
 
-        // 6. Mettre à jour le statut
         if (payoutResult.isSuccess()) {
             transaction.setStatus(TransactionStatus.PENDING);
             transaction.setExternalReference(payoutResult.getExternalReference());
 
-            // Débiter le stock si nécessaire
             if (routing.isUseStock()) {
                 debitStock(routing.getPayoutGateway(), routing.getDestCountry(), request.getAmount());
             }
@@ -119,6 +235,62 @@ public class TransferService {
                 .sourceCountry(routing.getSourceCountry() != null ? routing.getSourceCountry().getDisplayName() : null)
                 .destCountry(routing.getDestCountry() != null ? routing.getDestCountry().getDisplayName() : null)
                 .build();
+    }
+
+    private Transaction createTransactionFromOrchestration(User sender, TransferRequest request,
+            OrchestrationResult orchestration, String reference) {
+        FeeBreakdown fees = orchestration.getFees();
+
+        return Transaction.builder()
+                .sender(sender)
+                .senderPhone(request.getSenderPhone())
+                .senderName(sender.getFullName())
+                .recipientPhone(request.getRecipientPhone())
+                .recipientName(request.getRecipientName())
+                .amount(request.getAmount())
+                .fee(fees != null ? fees.getTotalFee() : 0L)
+                .gatewayFee(fees != null ? fees.getGatewayFee() : 0L)
+                .appFee(fees != null ? fees.getAppFee() : 0L)
+                .currency("XOF")
+                .platform(orchestration.getStrategy().getPrimaryGateway().getCode())
+                .status(TransactionStatus.PENDING)
+                .description(request.getDescription())
+                .externalReference(reference)
+                .sourceCountry(orchestration.getSourceCountry())
+                .destCountry(orchestration.getDestCountry())
+                .collectionGateway(orchestration.getStrategy().getPrimaryGateway())
+                .payoutGateway(orchestration.getStrategy().getPrimaryGateway())
+                .usedStock(orchestration.getStrategy().isUseStock())
+                .build();
+    }
+
+    private PayoutRequest buildPayoutRequest(TransferRequest request, OrchestrationResult orchestration, String reference) {
+        return PayoutRequest.builder()
+                .reference(reference)
+                .amount(request.getAmount())
+                .currency("XOF")
+                .recipientPhone(request.getRecipientPhone())
+                .recipientName(request.getRecipientName())
+                .country(orchestration.getDestCountry())
+                .operator(orchestration.getDestOperator())
+                .description(request.getDescription())
+                .build();
+    }
+
+    private String buildRoutingReason(OrchestrationResult orchestration, PayoutExecutionResult execResult) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Strategy: ").append(orchestration.getStrategy().getType());
+        sb.append(" | Score: ").append(orchestration.getStrategy().getPrimaryScore());
+        
+        if (execResult.isSuccess()) {
+            sb.append(" | Gateway: ").append(execResult.getGateway());
+            if (execResult.getAttemptNumber() > 1) {
+                sb.append(" (fallback après ").append(execResult.getAttemptNumber() - 1).append(" échec(s))");
+            }
+        }
+        
+        sb.append(" | Temps: ").append(execResult.getExecutionTimeMs()).append("ms");
+        return sb.toString();
     }
 
     /**
