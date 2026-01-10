@@ -12,6 +12,8 @@ import com.mbotamapay.gateway.dto.PayoutResponse;
 import com.mbotamapay.repository.GatewayRouteRepository;
 import com.mbotamapay.repository.GatewayStockRepository;
 import com.mbotamapay.service.FeeCalculator;
+import com.mbotamapay.service.orchestration.BridgeRoutingService.BridgeLeg;
+import com.mbotamapay.service.orchestration.BridgeRoutingService.BridgeRoute;
 import com.mbotamapay.service.orchestration.RouteScorer.RouteScore;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +21,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -44,6 +46,7 @@ public class SmartPaymentOrchestrator {
     private final RouteScorer routeScorer;
     private final FeeCalculator feeCalculator;
     private final List<PayoutGateway> payoutGateways;
+    private final BridgeRoutingService bridgeRoutingService;
 
     @Value("${routing.max-retries:3}")
     private int maxRetries;
@@ -56,6 +59,9 @@ public class SmartPaymentOrchestrator {
 
     @Value("${routing.prefer-same-gateway:true}")
     private boolean preferSameGateway;
+
+    @Value("${routing.enable-bridge-routing:true}")
+    private boolean enableBridgeRouting;
 
     /**
      * Détermine la meilleure stratégie de routage
@@ -85,7 +91,12 @@ public class SmartPaymentOrchestrator {
 
         // 3. Trouver et scorer toutes les routes
         List<GatewayRoute> routes = routeRepository.findActiveRoutes(source, dest);
+        
+        // Si aucune route directe, essayer le bridge routing
         if (routes.isEmpty()) {
+            if (enableBridgeRouting) {
+                return orchestrateBridgePayment(request, source, dest, destOperator, startTime);
+            }
             return OrchestrationResult.failed("Aucune route disponible pour " + source + " -> " + dest);
         }
 
@@ -252,6 +263,186 @@ public class SmartPaymentOrchestrator {
     }
 
     /**
+     * Orchestration via pont (bridge) quand aucune route directe n'existe
+     */
+    private OrchestrationResult orchestrateBridgePayment(OrchestrationRequest request,
+            Country source, Country dest, Optional<MobileOperator> destOperator, long startTime) {
+        
+        log.info("No direct route found, searching bridge route: {} -> {}", source, dest);
+
+        Optional<BridgeRoute> bridgeRouteOpt = bridgeRoutingService.findBridgeRoute(
+                source, dest, request.getAmount());
+
+        if (bridgeRouteOpt.isEmpty()) {
+            return OrchestrationResult.failed(
+                    "Aucune route directe ni pont disponible pour " + source + " -> " + dest);
+        }
+
+        BridgeRoute bridgeRoute = bridgeRouteOpt.get();
+        log.info("Bridge route found: {}", bridgeRoute.getRouteDescription());
+
+        // Construire la stratégie bridge
+        List<BridgeLegStrategy> bridgeLegs = new ArrayList<>();
+        for (BridgeLeg leg : bridgeRoute.getLegs()) {
+            bridgeLegs.add(BridgeLegStrategy.builder()
+                    .fromCountry(leg.getFrom())
+                    .toCountry(leg.getTo())
+                    .gateway(leg.getGateway())
+                    .feePercent(leg.getFeePercent())
+                    .build());
+        }
+
+        RoutingStrategy strategy = RoutingStrategy.builder()
+                .type(RoutingStrategyType.BRIDGE)
+                .bridgeLegs(bridgeLegs)
+                .bridgeCountries(bridgeRoute.getBridgeCountries())
+                .bridgeHopCount(bridgeRoute.getHopCount())
+                .totalBridgeFeePercent(bridgeRoute.getTotalFeePercent())
+                .totalAmount(request.getAmount())
+                .build();
+
+        // Calculer les frais totaux (incluant overhead bridge)
+        FeeBreakdown fees = feeCalculator.calculateFees(
+                request.getAmount(),
+                bridgeRoute.getTotalFeePercent()
+        );
+
+        long orchestrationTime = System.currentTimeMillis() - startTime;
+
+        return OrchestrationResult.builder()
+                .success(true)
+                .sourceCountry(source)
+                .destCountry(dest)
+                .destOperator(destOperator.orElse(null))
+                .strategy(strategy)
+                .fees(fees)
+                .isBridgePayment(true)
+                .bridgeRoute(bridgeRoute)
+                .orchestrationTimeMs(orchestrationTime)
+                .build();
+    }
+
+    /**
+     * Exécute un paiement bridge (multi-legs)
+     */
+    @Transactional
+    public PayoutExecutionResult executeBridgePayment(OrchestrationResult orchestration, PayoutRequest originalRequest) {
+        if (!orchestration.isBridgePayment() || orchestration.getStrategy().getBridgeLegs() == null) {
+            return PayoutExecutionResult.builder()
+                    .success(false)
+                    .errorMessage("Not a bridge payment")
+                    .build();
+        }
+
+        List<BridgeLegStrategy> legs = orchestration.getStrategy().getBridgeLegs();
+        List<BridgeLegResult> legResults = new ArrayList<>();
+        long totalExecutionTime = 0;
+
+        log.info("Executing bridge payment with {} legs", legs.size());
+
+        // Exécuter chaque leg séquentiellement
+        for (int i = 0; i < legs.size(); i++) {
+            BridgeLegStrategy leg = legs.get(i);
+            log.info("Executing bridge leg {}/{}: {} -> {} via {}", 
+                    i + 1, legs.size(), leg.getFromCountry(), leg.getToCountry(), leg.getGateway());
+
+            long legStartTime = System.currentTimeMillis();
+
+            try {
+                PayoutGateway gateway = findPayoutGateway(leg.getGateway());
+                
+                // Adapter la requête pour ce leg
+                PayoutRequest legRequest = PayoutRequest.builder()
+                        .amount(originalRequest.getAmount())
+                        .currency(originalRequest.getCurrency())
+                        .recipientPhone(i == legs.size() - 1 
+                                ? originalRequest.getRecipientPhone() 
+                                : generateIntermediateAccount(leg.getToCountry()))
+                        .recipientName(i == legs.size() - 1 
+                                ? originalRequest.getRecipientName() 
+                                : "MBOTAMA_BRIDGE_" + leg.getToCountry().getIsoCode())
+                        .description("Bridge leg " + (i + 1) + ": " + leg.getFromCountry() + " -> " + leg.getToCountry())
+                        .build();
+
+                PayoutResponse response = gateway.initiatePayout(legRequest);
+                long legTime = System.currentTimeMillis() - legStartTime;
+                totalExecutionTime += legTime;
+
+                BridgeLegResult legResult = BridgeLegResult.builder()
+                        .legNumber(i + 1)
+                        .fromCountry(leg.getFromCountry())
+                        .toCountry(leg.getToCountry())
+                        .gateway(leg.getGateway())
+                        .success(response.isSuccess())
+                        .transactionId(response.getTransactionReference())
+                        .executionTimeMs(legTime)
+                        .build();
+
+                legResults.add(legResult);
+
+                if (!response.isSuccess()) {
+                    log.error("Bridge leg {} failed: {}", i + 1, response.getMessage());
+                    healthMonitor.recordFailure(leg.getGateway(), response.getMessage());
+                    
+                    // TODO: Implémenter rollback/compensation pour les legs précédents
+                    return PayoutExecutionResult.builder()
+                            .success(false)
+                            .errorMessage("Bridge leg " + (i + 1) + " failed: " + response.getMessage())
+                            .bridgeLegResults(legResults)
+                            .executionTimeMs(totalExecutionTime)
+                            .build();
+                }
+
+                healthMonitor.recordSuccess(leg.getGateway(), legTime);
+                log.info("Bridge leg {} completed successfully in {}ms", i + 1, legTime);
+
+            } catch (Exception e) {
+                long legTime = System.currentTimeMillis() - legStartTime;
+                totalExecutionTime += legTime;
+                
+                log.error("Bridge leg {} error: {}", i + 1, e.getMessage());
+                healthMonitor.recordFailure(leg.getGateway(), e.getMessage());
+
+                legResults.add(BridgeLegResult.builder()
+                        .legNumber(i + 1)
+                        .fromCountry(leg.getFromCountry())
+                        .toCountry(leg.getToCountry())
+                        .gateway(leg.getGateway())
+                        .success(false)
+                        .errorMessage(e.getMessage())
+                        .executionTimeMs(legTime)
+                        .build());
+
+                return PayoutExecutionResult.builder()
+                        .success(false)
+                        .errorMessage("Bridge leg " + (i + 1) + " error: " + e.getMessage())
+                        .bridgeLegResults(legResults)
+                        .executionTimeMs(totalExecutionTime)
+                        .build();
+            }
+        }
+
+        // Tous les legs ont réussi
+        log.info("Bridge payment completed successfully with {} legs in {}ms", legs.size(), totalExecutionTime);
+
+        return PayoutExecutionResult.builder()
+                .success(true)
+                .totalAttempts(legs.size())
+                .bridgeLegResults(legResults)
+                .executionTimeMs(totalExecutionTime)
+                .build();
+    }
+
+    /**
+     * Génère un compte intermédiaire pour les legs bridge
+     * En production, ce serait un compte de transit Mbotama dans chaque pays hub
+     */
+    private String generateIntermediateAccount(Country country) {
+        // Format: préfixe pays + numéro de compte transit Mbotama
+        return country.getPhonePrefix() + "00000001"; // Compte transit Mbotama
+    }
+
+    /**
      * Construit la stratégie de routage avec fallbacks
      */
     private RoutingStrategy buildStrategy(List<RouteScore> scoredRoutes, Long amount, Country dest) {
@@ -326,6 +517,8 @@ public class SmartPaymentOrchestrator {
         private FeeBreakdown fees;
         private List<RouteScore> scoredRoutes;
         private boolean isSplitPayment;
+        private boolean isBridgePayment;
+        private BridgeRoute bridgeRoute;
         private long orchestrationTimeMs;
 
         public static OrchestrationResult failed(String message) {
@@ -348,13 +541,46 @@ public class SmartPaymentOrchestrator {
         private int primaryScore;
         private boolean useStock;
         private Long totalAmount;
+        
+        // Bridge routing fields
+        private List<BridgeLegStrategy> bridgeLegs;
+        private List<Country> bridgeCountries;
+        private int bridgeHopCount;
+        private BigDecimal totalBridgeFeePercent;
     }
 
     public enum RoutingStrategyType {
         SINGLE,                 // Une seule gateway, pas de fallback
         SINGLE_WITH_FALLBACK,   // Gateway principale + fallbacks
         SPLIT,                  // Montant divisé entre plusieurs gateways
+        BRIDGE,                 // Route via pays intermédiaire(s)
         HYBRID                  // Combinaison split + fallback
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class BridgeLegStrategy {
+        private Country fromCountry;
+        private Country toCountry;
+        private GatewayType gateway;
+        private BigDecimal feePercent;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class BridgeLegResult {
+        private int legNumber;
+        private Country fromCountry;
+        private Country toCountry;
+        private GatewayType gateway;
+        private boolean success;
+        private String transactionId;
+        private String errorMessage;
+        private long executionTimeMs;
     }
 
     @lombok.Data
@@ -375,6 +601,7 @@ public class SmartPaymentOrchestrator {
         private int attemptNumber;
         private int totalAttempts;
         private List<FailedAttempt> failedAttempts;
+        private List<BridgeLegResult> bridgeLegResults;
         private long executionTimeMs;
         private String errorMessage;
     }

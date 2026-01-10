@@ -3,6 +3,7 @@ package com.mbotamapay.controller;
 import com.mbotamapay.entity.enums.Country;
 import com.mbotamapay.entity.enums.GatewayType;
 import com.mbotamapay.service.orchestration.*;
+import com.mbotamapay.service.orchestration.BridgeRoutingService.BridgeRoute;
 import com.mbotamapay.service.orchestration.DynamicRoutingConfig.*;
 import com.mbotamapay.service.orchestration.GatewayHealthMonitor.GatewayMetrics;
 import com.mbotamapay.service.orchestration.RoutingAnalytics.*;
@@ -32,6 +33,7 @@ public class AdminOrchestrationController {
     private final DynamicRoutingConfig routingConfig;
     private final RoutingAnalytics analytics;
     private final SmartPaymentOrchestrator orchestrator;
+    private final BridgeRoutingService bridgeRoutingService;
 
     // ==================== HEALTH & MONITORING ====================
 
@@ -46,6 +48,8 @@ public class AdminOrchestrationController {
                 .gatewayAnalytics(analytics.getAllGatewayMetrics())
                 .topCorridors(analytics.getTopCorridorsByVolume(10))
                 .problematicCorridors(analytics.getProblematicCorridors(5))
+                .topBridges(analytics.getTopBridges(5))
+                .problematicBridges(analytics.getProblematicBridges(5))
                 .dailyTrends(analytics.getDailyTrends(7))
                 .activeAlerts(analytics.getActiveAlerts())
                 .recommendations(analytics.getOptimizationRecommendations())
@@ -146,6 +150,114 @@ public class AdminOrchestrationController {
     @GetMapping("/analytics/recommendations")
     public ResponseEntity<List<OptimizationRecommendation>> getRecommendations() {
         return ResponseEntity.ok(analytics.getOptimizationRecommendations());
+    }
+
+    // ==================== BRIDGE ROUTING ====================
+
+    /**
+     * Métriques de toutes les routes bridge
+     */
+    @GetMapping("/bridges")
+    public ResponseEntity<List<BridgeMetrics>> getBridgeMetrics() {
+        return ResponseEntity.ok(analytics.getBridgeMetrics());
+    }
+
+    /**
+     * Top bridges par utilisation
+     */
+    @GetMapping("/bridges/top")
+    public ResponseEntity<List<BridgeMetrics>> getTopBridges(
+            @RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(analytics.getTopBridges(limit));
+    }
+
+    /**
+     * Bridges problématiques
+     */
+    @GetMapping("/bridges/problematic")
+    public ResponseEntity<List<BridgeMetrics>> getProblematicBridges(
+            @RequestParam(defaultValue = "10") int limit) {
+        return ResponseEntity.ok(analytics.getProblematicBridges(limit));
+    }
+
+    /**
+     * Trouver une route bridge pour un corridor
+     */
+    @GetMapping("/bridges/find/{source}/{dest}")
+    public ResponseEntity<BridgeRouteResponse> findBridgeRoute(
+            @PathVariable String source,
+            @PathVariable String dest,
+            @RequestParam(defaultValue = "100000") Long amount) {
+        
+        Country sourceCountry = Country.fromIsoCode(source)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid source country: " + source));
+        Country destCountry = Country.fromIsoCode(dest)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid dest country: " + dest));
+
+        Optional<BridgeRoute> bridgeRoute = bridgeRoutingService.findBridgeRoute(
+                sourceCountry, destCountry, amount);
+
+        if (bridgeRoute.isEmpty()) {
+            return ResponseEntity.ok(BridgeRouteResponse.builder()
+                    .found(false)
+                    .message("No bridge route found for " + source + " -> " + dest)
+                    .build());
+        }
+
+        BridgeRoute route = bridgeRoute.get();
+        return ResponseEntity.ok(BridgeRouteResponse.builder()
+                .found(true)
+                .routeDescription(route.getRouteDescription())
+                .bridgeCountries(route.getBridgeCountries().stream()
+                        .map(Country::getIsoCode).toList())
+                .hopCount(route.getHopCount())
+                .totalFeePercent(route.getTotalFeePercent().doubleValue())
+                .legs(route.getLegs().stream()
+                        .map(leg -> BridgeLegInfo.builder()
+                                .from(leg.getFrom().getIsoCode())
+                                .to(leg.getTo().getIsoCode())
+                                .gateway(leg.getGateway().name())
+                                .feePercent(leg.getFeePercent().doubleValue())
+                                .build())
+                        .toList())
+                .build());
+    }
+
+    /**
+     * Trouver toutes les routes bridge possibles pour un corridor
+     */
+    @GetMapping("/bridges/all/{source}/{dest}")
+    public ResponseEntity<List<BridgeRouteResponse>> findAllBridgeRoutes(
+            @PathVariable String source,
+            @PathVariable String dest,
+            @RequestParam(defaultValue = "100000") Long amount) {
+        
+        Country sourceCountry = Country.fromIsoCode(source)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid source country: " + source));
+        Country destCountry = Country.fromIsoCode(dest)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid dest country: " + dest));
+
+        List<BridgeRoute> routes = bridgeRoutingService.findAllBridgeRoutes(
+                sourceCountry, destCountry, amount);
+
+        return ResponseEntity.ok(routes.stream()
+                .map(route -> BridgeRouteResponse.builder()
+                        .found(true)
+                        .routeDescription(route.getRouteDescription())
+                        .bridgeCountries(route.getBridgeCountries().stream()
+                                .map(Country::getIsoCode).toList())
+                        .hopCount(route.getHopCount())
+                        .totalFeePercent(route.getTotalFeePercent().doubleValue())
+                        .legs(route.getLegs().stream()
+                                .map(leg -> BridgeLegInfo.builder()
+                                        .from(leg.getFrom().getIsoCode())
+                                        .to(leg.getTo().getIsoCode())
+                                        .gateway(leg.getGateway().name())
+                                        .feePercent(leg.getFeePercent().doubleValue())
+                                        .build())
+                                .toList())
+                        .build())
+                .toList());
     }
 
     // ==================== CONFIGURATION ====================
@@ -435,12 +547,35 @@ public class AdminOrchestrationController {
 
     @lombok.Data
     @lombok.Builder
+    public static class BridgeRouteResponse {
+        private boolean found;
+        private String message;
+        private String routeDescription;
+        private List<String> bridgeCountries;
+        private int hopCount;
+        private double totalFeePercent;
+        private List<BridgeLegInfo> legs;
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    public static class BridgeLegInfo {
+        private String from;
+        private String to;
+        private String gateway;
+        private double feePercent;
+    }
+
+    @lombok.Data
+    @lombok.Builder
     public static class OrchestrationDashboard {
         private GlobalMetrics globalMetrics;
         private Map<GatewayType, GatewayHealthMonitor.GatewayMetrics> gatewayHealth;
         private Map<GatewayType, RoutingAnalytics.GatewayMetrics> gatewayAnalytics;
         private List<CorridorMetrics> topCorridors;
         private List<CorridorMetrics> problematicCorridors;
+        private List<BridgeMetrics> topBridges;
+        private List<BridgeMetrics> problematicBridges;
         private List<DailyMetrics> dailyTrends;
         private List<RoutingAlert> activeAlerts;
         private List<OptimizationRecommendation> recommendations;

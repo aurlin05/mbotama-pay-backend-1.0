@@ -6,8 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
@@ -36,6 +34,11 @@ public class RoutingAnalytics {
     private final AtomicLong totalFailed = new AtomicLong(0);
     private final AtomicLong totalVolume = new AtomicLong(0);
     private final AtomicLong totalFees = new AtomicLong(0);
+
+    // Métriques bridge routing
+    private final AtomicLong totalBridgeTransactions = new AtomicLong(0);
+    private final AtomicLong successfulBridgeTransactions = new AtomicLong(0);
+    private final Map<String, BridgeStats> bridgeStats = new ConcurrentHashMap<>();
 
     // Historique pour tendances
     private final Map<LocalDate, DailyStats> dailyHistory = new ConcurrentHashMap<>();
@@ -126,6 +129,73 @@ public class RoutingAnalytics {
         log.info("Analytics: fallback recorded {} -> {} for corridor {}", fromGateway, toGateway, corridorKey);
     }
 
+    /**
+     * Enregistre une transaction bridge réussie
+     */
+    public void recordBridgeSuccess(Country source, Country dest, List<Country> bridgeCountries,
+                                    Long amount, Long fee, long totalExecutionTimeMs, int hopCount) {
+        totalTransactions.incrementAndGet();
+        totalSuccessful.incrementAndGet();
+        totalBridgeTransactions.incrementAndGet();
+        successfulBridgeTransactions.incrementAndGet();
+        totalVolume.addAndGet(amount);
+        totalFees.addAndGet(fee);
+
+        // Stats bridge spécifiques
+        String bridgeKey = buildBridgeKey(source, dest, bridgeCountries);
+        bridgeStats.computeIfAbsent(bridgeKey, k -> new BridgeStats(source, dest, bridgeCountries))
+                .recordSuccess(amount, fee, totalExecutionTimeMs);
+
+        // Stats corridor (marquer comme bridge)
+        String corridorKey = source.getIsoCode() + "->" + dest.getIsoCode();
+        corridorStats.computeIfAbsent(corridorKey, k -> new CorridorStats(source, dest))
+                .recordBridgeSuccess(amount, fee);
+
+        // Stats journalières
+        dailyHistory.computeIfAbsent(LocalDate.now(), k -> new DailyStats())
+                .recordBridgeSuccess(amount, fee);
+
+        log.info("Analytics: bridge success recorded {} -> {} via {} hops, amount={}", 
+                source, dest, hopCount, amount);
+    }
+
+    /**
+     * Enregistre une transaction bridge échouée
+     */
+    public void recordBridgeFailure(Country source, Country dest, List<Country> bridgeCountries,
+                                    Long amount, int failedLegNumber, String reason) {
+        totalTransactions.incrementAndGet();
+        totalFailed.incrementAndGet();
+        totalBridgeTransactions.incrementAndGet();
+
+        // Stats bridge spécifiques
+        String bridgeKey = buildBridgeKey(source, dest, bridgeCountries);
+        bridgeStats.computeIfAbsent(bridgeKey, k -> new BridgeStats(source, dest, bridgeCountries))
+                .recordFailure(failedLegNumber, reason);
+
+        // Stats corridor
+        String corridorKey = source.getIsoCode() + "->" + dest.getIsoCode();
+        corridorStats.computeIfAbsent(corridorKey, k -> new CorridorStats(source, dest))
+                .recordBridgeFailure(reason);
+
+        // Stats journalières
+        dailyHistory.computeIfAbsent(LocalDate.now(), k -> new DailyStats())
+                .recordFailure();
+
+        log.warn("Analytics: bridge failure recorded {} -> {} at leg {}, reason={}", 
+                source, dest, failedLegNumber, reason);
+    }
+
+    private String buildBridgeKey(Country source, Country dest, List<Country> bridges) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(source.getIsoCode());
+        for (Country bridge : bridges) {
+            sb.append("->").append(bridge.getIsoCode());
+        }
+        sb.append("->").append(dest.getIsoCode());
+        return sb.toString();
+    }
+
     // === Récupération des métriques ===
 
     /**
@@ -143,6 +213,9 @@ public class RoutingAnalytics {
                 .totalVolume(totalVolume.get())
                 .totalFees(totalFees.get())
                 .averageTransactionAmount(successful > 0 ? totalVolume.get() / successful : 0)
+                .totalBridgeTransactions(totalBridgeTransactions.get())
+                .successfulBridgeTransactions(successfulBridgeTransactions.get())
+                .bridgeUsageRate(total > 0 ? (totalBridgeTransactions.get() * 100.0 / total) : 0)
                 .build();
     }
 
@@ -184,6 +257,39 @@ public class RoutingAnalytics {
         return corridorStats.values().stream()
                 .map(CorridorStats::toMetrics)
                 .sorted(Comparator.comparingLong(CorridorMetrics::getTotalVolume).reversed())
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Métriques des routes bridge
+     */
+    public List<BridgeMetrics> getBridgeMetrics() {
+        return bridgeStats.values().stream()
+                .map(BridgeStats::toMetrics)
+                .sorted(Comparator.comparingLong(BridgeMetrics::getTotalTransactions).reversed())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Top bridges par utilisation
+     */
+    public List<BridgeMetrics> getTopBridges(int limit) {
+        return bridgeStats.values().stream()
+                .map(BridgeStats::toMetrics)
+                .sorted(Comparator.comparingLong(BridgeMetrics::getTotalTransactions).reversed())
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Bridges problématiques (taux d'échec élevé)
+     */
+    public List<BridgeMetrics> getProblematicBridges(int limit) {
+        return bridgeStats.values().stream()
+                .map(BridgeStats::toMetrics)
+                .filter(m -> m.getFailureRate() > 10 && m.getTotalTransactions() > 3)
+                .sorted(Comparator.comparingDouble(BridgeMetrics::getFailureRate).reversed())
                 .limit(limit)
                 .collect(Collectors.toList());
     }
@@ -406,6 +512,18 @@ public class RoutingAnalytics {
             fallbackCount.incrementAndGet();
         }
 
+        void recordBridgeSuccess(Long amount, Long fee) {
+            totalTransactions.incrementAndGet();
+            successfulTransactions.incrementAndGet();
+            totalVolume.addAndGet(amount);
+            totalFees.addAndGet(fee);
+        }
+
+        void recordBridgeFailure(String reason) {
+            totalTransactions.incrementAndGet();
+            failedTransactions.incrementAndGet();
+        }
+
         CorridorMetrics toMetrics() {
             long total = totalTransactions.get();
             long successful = successfulTransactions.get();
@@ -444,6 +562,13 @@ public class RoutingAnalytics {
             fees.addAndGet(fee);
         }
 
+        void recordBridgeSuccess(Long amount, Long fee) {
+            transactions.incrementAndGet();
+            successful.incrementAndGet();
+            volume.addAndGet(amount);
+            fees.addAndGet(fee);
+        }
+
         void recordFailure() {
             transactions.incrementAndGet();
             failed.incrementAndGet();
@@ -464,6 +589,78 @@ public class RoutingAnalytics {
         }
     }
 
+    private static class BridgeStats {
+        private final Country source;
+        private final Country dest;
+        private final List<Country> bridgeCountries;
+        private final AtomicLong totalTransactions = new AtomicLong(0);
+        private final AtomicLong successfulTransactions = new AtomicLong(0);
+        private final AtomicLong failedTransactions = new AtomicLong(0);
+        private final AtomicLong totalVolume = new AtomicLong(0);
+        private final AtomicLong totalFees = new AtomicLong(0);
+        private final AtomicLong totalExecutionTime = new AtomicLong(0);
+        private final Map<Integer, AtomicLong> failuresByLeg = new ConcurrentHashMap<>();
+        private volatile String lastFailureReason;
+
+        BridgeStats(Country source, Country dest, List<Country> bridgeCountries) {
+            this.source = source;
+            this.dest = dest;
+            this.bridgeCountries = new ArrayList<>(bridgeCountries);
+        }
+
+        void recordSuccess(Long amount, Long fee, long executionTimeMs) {
+            totalTransactions.incrementAndGet();
+            successfulTransactions.incrementAndGet();
+            totalVolume.addAndGet(amount);
+            totalFees.addAndGet(fee);
+            totalExecutionTime.addAndGet(executionTimeMs);
+        }
+
+        void recordFailure(int failedLegNumber, String reason) {
+            totalTransactions.incrementAndGet();
+            failedTransactions.incrementAndGet();
+            failuresByLeg.computeIfAbsent(failedLegNumber, k -> new AtomicLong(0)).incrementAndGet();
+            lastFailureReason = reason;
+        }
+
+        BridgeMetrics toMetrics() {
+            long total = totalTransactions.get();
+            long successful = successfulTransactions.get();
+            long failed = failedTransactions.get();
+
+            Map<Integer, Long> legFailures = failuresByLeg.entrySet().stream()
+                    .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().get()));
+
+            return BridgeMetrics.builder()
+                    .sourceCountry(source)
+                    .destCountry(dest)
+                    .bridgeCountries(new ArrayList<>(bridgeCountries))
+                    .hopCount(bridgeCountries.size())
+                    .routeDescription(buildRouteDescription())
+                    .totalTransactions(total)
+                    .successfulTransactions(successful)
+                    .failedTransactions(failed)
+                    .successRate(total > 0 ? (successful * 100.0 / total) : 100)
+                    .failureRate(total > 0 ? (failed * 100.0 / total) : 0)
+                    .totalVolume(totalVolume.get())
+                    .totalFees(totalFees.get())
+                    .averageExecutionTimeMs(successful > 0 ? totalExecutionTime.get() / successful : 0)
+                    .failuresByLeg(legFailures)
+                    .lastFailureReason(lastFailureReason)
+                    .build();
+        }
+
+        private String buildRouteDescription() {
+            StringBuilder sb = new StringBuilder();
+            sb.append(source.getIsoCode());
+            for (Country bridge : bridgeCountries) {
+                sb.append(" → ").append(bridge.getIsoCode());
+            }
+            sb.append(" → ").append(dest.getIsoCode());
+            return sb.toString();
+        }
+    }
+
     // === DTOs ===
 
     @lombok.Data
@@ -476,6 +673,9 @@ public class RoutingAnalytics {
         private long totalVolume;
         private long totalFees;
         private long averageTransactionAmount;
+        private long totalBridgeTransactions;
+        private long successfulBridgeTransactions;
+        private double bridgeUsageRate;
     }
 
     @lombok.Data
@@ -537,6 +737,26 @@ public class RoutingAnalytics {
         public static DailyMetrics empty(LocalDate date) {
             return DailyMetrics.builder().date(date).successRate(100).build();
         }
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    public static class BridgeMetrics {
+        private Country sourceCountry;
+        private Country destCountry;
+        private List<Country> bridgeCountries;
+        private int hopCount;
+        private String routeDescription;
+        private long totalTransactions;
+        private long successfulTransactions;
+        private long failedTransactions;
+        private double successRate;
+        private double failureRate;
+        private long totalVolume;
+        private long totalFees;
+        private long averageExecutionTimeMs;
+        private Map<Integer, Long> failuresByLeg;
+        private String lastFailureReason;
     }
 
     @lombok.Data

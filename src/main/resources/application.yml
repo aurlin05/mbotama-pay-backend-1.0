@@ -155,6 +155,10 @@ routing:
   split-threshold: 5000000  # 5M XOF - au-delà, split entre gateways
   min-score-threshold: 30   # Score minimum pour considérer une route
   prefer-same-gateway: true
+  # Bridge Routing Settings
+  enable-bridge-routing: true  # Activer le routage via ponts
+  bridge-fee-overhead: 0.50    # Frais additionnels par hop (%)
+  max-bridge-hops: 2           # Nombre max de pays intermédiaires
   # Scoring Weights (total = 100)
   score:
     weight:

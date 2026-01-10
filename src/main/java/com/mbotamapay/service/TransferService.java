@@ -115,25 +115,48 @@ public class TransferService {
                 orchestration.getStrategy().getType(),
                 orchestration.getStrategy().getPrimaryGateway());
 
-        // 4. Exécuter avec fallback automatique
+        // 4. Exécuter avec fallback automatique ou bridge
         PayoutRequest payoutRequest = buildPayoutRequest(request, orchestration, reference);
-        PayoutExecutionResult execResult = orchestrator.executeWithFallback(orchestration, payoutRequest);
+        PayoutExecutionResult execResult;
+        
+        if (orchestration.isBridgePayment()) {
+            // Exécution bridge (multi-legs)
+            log.info("Executing bridge payment: {}", orchestration.getBridgeRoute().getRouteDescription());
+            execResult = orchestrator.executeBridgePayment(orchestration, payoutRequest);
+        } else {
+            // Exécution standard avec fallback
+            execResult = orchestrator.executeWithFallback(orchestration, payoutRequest);
+        }
 
         // 5. Mettre à jour la transaction et enregistrer les métriques
         if (execResult.isSuccess()) {
             transaction.setStatus(TransactionStatus.PENDING);
-            transaction.setExternalReference(execResult.getResponse().getExternalReference());
+            if (execResult.getResponse() != null) {
+                transaction.setExternalReference(execResult.getResponse().getExternalReference());
+            }
             transaction.setPayoutGateway(execResult.getGateway());
 
             // Enregistrer le succès dans les analytics
-            analytics.recordSuccess(
-                    execResult.getGateway(),
-                    orchestration.getSourceCountry(),
-                    orchestration.getDestCountry(),
-                    request.getAmount(),
-                    transaction.getFee(),
-                    execResult.getExecutionTimeMs()
-            );
+            if (orchestration.isBridgePayment()) {
+                analytics.recordBridgeSuccess(
+                        orchestration.getSourceCountry(),
+                        orchestration.getDestCountry(),
+                        orchestration.getBridgeRoute().getBridgeCountries(),
+                        request.getAmount(),
+                        transaction.getFee(),
+                        execResult.getExecutionTimeMs(),
+                        orchestration.getBridgeRoute().getHopCount()
+                );
+            } else {
+                analytics.recordSuccess(
+                        execResult.getGateway(),
+                        orchestration.getSourceCountry(),
+                        orchestration.getDestCountry(),
+                        request.getAmount(),
+                        transaction.getFee(),
+                        execResult.getExecutionTimeMs()
+                );
+            }
 
             // Log si fallback utilisé
             if (execResult.getAttemptNumber() > 1) {
@@ -154,14 +177,32 @@ public class TransferService {
                     execResult.getErrorMessage());
 
             // Enregistrer l'échec
-            for (FailedAttempt failed : execResult.getFailedAttempts()) {
-                analytics.recordFailure(
-                        failed.getGateway(),
+            if (orchestration.isBridgePayment() && execResult.getBridgeLegResults() != null) {
+                // Trouver le leg qui a échoué
+                int failedLeg = execResult.getBridgeLegResults().stream()
+                        .filter(leg -> !leg.isSuccess())
+                        .findFirst()
+                        .map(BridgeLegResult::getLegNumber)
+                        .orElse(1);
+                
+                analytics.recordBridgeFailure(
                         orchestration.getSourceCountry(),
                         orchestration.getDestCountry(),
+                        orchestration.getBridgeRoute().getBridgeCountries(),
                         request.getAmount(),
-                        failed.getReason()
+                        failedLeg,
+                        execResult.getErrorMessage()
                 );
+            } else if (execResult.getFailedAttempts() != null) {
+                for (FailedAttempt failed : execResult.getFailedAttempts()) {
+                    analytics.recordFailure(
+                            failed.getGateway(),
+                            orchestration.getSourceCountry(),
+                            orchestration.getDestCountry(),
+                            request.getAmount(),
+                            failed.getReason()
+                    );
+                }
             }
         }
 
@@ -280,12 +321,24 @@ public class TransferService {
     private String buildRoutingReason(OrchestrationResult orchestration, PayoutExecutionResult execResult) {
         StringBuilder sb = new StringBuilder();
         sb.append("Strategy: ").append(orchestration.getStrategy().getType());
-        sb.append(" | Score: ").append(orchestration.getStrategy().getPrimaryScore());
+        
+        if (orchestration.isBridgePayment()) {
+            sb.append(" | Bridge: ").append(orchestration.getBridgeRoute().getRouteDescription());
+            sb.append(" | Hops: ").append(orchestration.getBridgeRoute().getHopCount());
+            sb.append(" | Bridge Fee: ").append(orchestration.getBridgeRoute().getTotalFeePercent()).append("%");
+        } else {
+            sb.append(" | Score: ").append(orchestration.getStrategy().getPrimaryScore());
+        }
         
         if (execResult.isSuccess()) {
-            sb.append(" | Gateway: ").append(execResult.getGateway());
+            if (execResult.getGateway() != null) {
+                sb.append(" | Gateway: ").append(execResult.getGateway());
+            }
             if (execResult.getAttemptNumber() > 1) {
                 sb.append(" (fallback après ").append(execResult.getAttemptNumber() - 1).append(" échec(s))");
+            }
+            if (execResult.getBridgeLegResults() != null && !execResult.getBridgeLegResults().isEmpty()) {
+                sb.append(" | Legs: ").append(execResult.getBridgeLegResults().size());
             }
         }
         
