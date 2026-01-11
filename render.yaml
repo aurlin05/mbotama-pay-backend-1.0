@@ -37,14 +37,8 @@ services:
         value: "brevo"
       - key: BREVO_API_KEY
         sync: false  # Set this in Render Dashboard as a secret
-      - key: TWILIO_ACCOUNT_SID
-        sync: false  # Set this in Render Dashboard as a secret
-      - key: TWILIO_AUTH_TOKEN
-        sync: false  # Set this in Render Dashboard as a secret
-      - key: TWILIO_PHONE_NUMBER
-        sync: false  # Set this in Render Dashboard
-      - key: TWILIO_ENABLED
-        value: "true"
+      - key: SMS_ENABLED
+        value: "false"
       - key: FEEXPAY_API_URL
         value: "https://api.feexpay.me"
       - key: FEEXPAY_API_KEY

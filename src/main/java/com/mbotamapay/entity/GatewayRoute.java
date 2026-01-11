@@ -24,11 +24,11 @@ public class GatewayRoute {
     private Long id;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "source_country", nullable = false, length = 5)
+    @Column(name = "source_country", nullable = false, length = 30)
     private Country sourceCountry;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "dest_country", nullable = false, length = 5)
+    @Column(name = "dest_country", nullable = false, length = 30)
     private Country destCountry;
 
     @Enumerated(EnumType.STRING)

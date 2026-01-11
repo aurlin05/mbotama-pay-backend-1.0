@@ -1,9 +1,6 @@
 package com.mbotamapay.service;
 
 import com.mbotamapay.template.SmsTemplates;
-import com.twilio.Twilio;
-import com.twilio.rest.api.v2010.account.Message;
-import com.twilio.type.PhoneNumber;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,7 +8,10 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 /**
- * SMS Service for sending OTP codes and notifications via Twilio
+ * SMS Service for sending OTP codes and notifications
+ * Currently in development mode - logs SMS only
+ * 
+ * TODO: Integrate with Orange SMS API or other African SMS provider
  */
 @Service
 @Slf4j
@@ -20,25 +20,15 @@ public class SmsService {
     @Value("${otp.expiration:300}")
     private int otpExpirationSeconds;
 
-    @Value("${twilio.account-sid:}")
-    private String accountSid;
-
-    @Value("${twilio.auth-token:}")
-    private String authToken;
-
-    @Value("${twilio.phone-number:}")
-    private String twilioPhoneNumber;
-
-    @Value("${twilio.enabled:false}")
-    private boolean twilioEnabled;
+    @Value("${sms.enabled:false}")
+    private boolean smsEnabled;
 
     @PostConstruct
     public void init() {
-        if (twilioEnabled && !accountSid.isEmpty() && !authToken.isEmpty()) {
-            Twilio.init(accountSid, authToken);
-            log.info("✅ Twilio SMS service initialized successfully");
+        if (smsEnabled) {
+            log.info("✅ SMS service initialized (provider to be configured)");
         } else {
-            log.warn("⚠️ Twilio SMS service is DISABLED - SMS will be logged only");
+            log.info("📱 SMS service in DEV mode - messages will be logged only");
         }
     }
 
@@ -122,28 +112,18 @@ public class SmsService {
     }
 
     /**
-     * Internal method to send SMS via Twilio
+     * Internal method to send SMS
+     * Currently logs only - integrate with SMS provider here
      */
     private void doSendSms(String phoneNumber, String messageText) {
-        // Always log the SMS for debugging
         log.info("========================================");
         log.info("📱 SMS to {}", phoneNumber);
         log.info("📝 Message: {}", messageText);
         log.info("========================================");
 
-        if (twilioEnabled && !accountSid.isEmpty() && !authToken.isEmpty() && !twilioPhoneNumber.isEmpty()) {
-            try {
-                Message message = Message.creator(
-                        new PhoneNumber(phoneNumber),
-                        new PhoneNumber(twilioPhoneNumber),
-                        messageText).create();
-
-                log.info("✅ SMS sent successfully via Twilio. SID: {}", message.getSid());
-            } catch (Exception e) {
-                log.error("❌ Failed to send SMS via Twilio to {}: {}", phoneNumber, e.getMessage());
-            }
-        } else {
-            log.debug("Twilio is disabled, SMS logged only (not sent)");
+        if (smsEnabled) {
+            // TODO: Integrate with SMS provider (Orange, Infobip, etc.)
+            log.debug("SMS provider not configured - message logged only");
         }
     }
 }

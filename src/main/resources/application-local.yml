@@ -22,7 +22,6 @@ spring:
     properties:
       hibernate:
         "[format_sql]": true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
   
   # Flyway Migrations
   flyway:
@@ -149,9 +148,6 @@ fees:
   max-total-percent: 7.0
   min-fee-amount: 100
 
-# Twilio SMS Configuration
-twilio:
-  account-sid: ${TWILIO_ACCOUNT_SID:}
-  auth-token: ${TWILIO_AUTH_TOKEN:}
-  phone-number: ${TWILIO_PHONE_NUMBER:}
-  enabled: ${TWILIO_ENABLED:false}
+# SMS Configuration (dev mode - logs only)
+sms:
+  enabled: false

@@ -32,7 +32,7 @@ public class GatewayStock {
     private GatewayType gateway;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "country", nullable = false, length = 5)
+    @Column(name = "country", nullable = false, length = 30)
     private Country country;
 
     /**
