@@ -90,7 +90,11 @@ email:
 brevo:
   api-key: ${BREVO_API_KEY:}
 
-# SMS Configuration (to be configured with African provider)
+# SMS Configuration (Infobip)
 sms:
-  enabled: ${SMS_ENABLED:false}
+  enabled: ${SMS_ENABLED:true}
+  infobip:
+    api-key: ${INFOBIP_API_KEY:}
+    base-url: ${INFOBIP_BASE_URL:https://9g3g39.api.infobip.com}
+    sender: ${INFOBIP_SENDER:MbotamaPay}
 

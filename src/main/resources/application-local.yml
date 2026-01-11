@@ -148,6 +148,10 @@ fees:
   max-total-percent: 7.0
   min-fee-amount: 100
 
-# SMS Configuration (dev mode - logs only)
+# SMS Configuration (Infobip - disabled in local)
 sms:
   enabled: false
+  infobip:
+    api-key: ${INFOBIP_API_KEY:}
+    base-url: https://9g3g39.api.infobip.com
+    sender: MbotamaPay

@@ -38,7 +38,13 @@ services:
       - key: BREVO_API_KEY
         sync: false  # Set this in Render Dashboard as a secret
       - key: SMS_ENABLED
-        value: "false"
+        value: "true"
+      - key: INFOBIP_API_KEY
+        sync: false  # Set in Render Dashboard
+      - key: INFOBIP_BASE_URL
+        value: "https://9g3g39.api.infobip.com"
+      - key: INFOBIP_SENDER
+        value: "MbotamaPay"
       - key: FEEXPAY_API_URL
         value: "https://api.feexpay.me"
       - key: FEEXPAY_API_KEY
