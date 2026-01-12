@@ -22,7 +22,6 @@ public enum Country {
     GUINEA("GN", "224", "GNF", "Guinée"),
     MALI("ML", "223", "XOF", "Mali"),
     NIGER("NE", "227", "XOF", "Niger"),
-    NIGERIA("NG", "234", "NGN", "Nigeria"),
     SENEGAL("SN", "221", "XOF", "Sénégal"),
     TOGO("TG", "228", "XOF", "Togo");
 

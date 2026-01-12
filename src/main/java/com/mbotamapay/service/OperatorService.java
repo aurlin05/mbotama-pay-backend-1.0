@@ -49,8 +49,7 @@ public class OperatorService {
             Map.entry(Country.CAMEROON, "🇨🇲"),
             Map.entry(Country.NIGER, "🇳🇪"),
             Map.entry(Country.CONGO_BRAZZAVILLE, "🇨🇬"),
-            Map.entry(Country.DRC, "🇨🇩"),
-            Map.entry(Country.NIGERIA, "🇳🇬"));
+            Map.entry(Country.DRC, "🇨🇩"));
 
     /**
      * Récupère les opérateurs disponibles à partir d'un numéro de téléphone

@@ -319,7 +319,6 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
                 case GUINEA -> "224";
                 case NIGER -> "227";
                 case DRC -> "243";
-                case NIGERIA -> "234";
                 default -> country.getPhonePrefix();
             };
         }
