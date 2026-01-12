@@ -148,10 +148,10 @@ fees:
   max-total-percent: 7.0
   min-fee-amount: 100
 
-# SMS Configuration (Infobip - disabled in local)
+# SMS/Email Configuration (Infobip - disabled in local)
 sms:
   enabled: false
   infobip:
     api-key: ${INFOBIP_API_KEY:}
-    base-url: https://9g3g39.api.infobip.com
-    sender: MbotamaPay
+    base-url: https://x1r9qq.api.infobip.com
+    sender-email: aurlinmika5@selfserve.worlds-connected.co

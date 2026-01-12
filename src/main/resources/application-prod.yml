@@ -90,11 +90,11 @@ email:
 brevo:
   api-key: ${BREVO_API_KEY:}
 
-# SMS Configuration (Infobip)
+# SMS/Email Configuration (Infobip)
 sms:
   enabled: ${SMS_ENABLED:true}
   infobip:
     api-key: ${INFOBIP_API_KEY:}
-    base-url: ${INFOBIP_BASE_URL:https://9g3g39.api.infobip.com}
-    sender: ${INFOBIP_SENDER:MbotamaPay}
+    base-url: ${INFOBIP_BASE_URL:https://x1r9qq.api.infobip.com}
+    sender-email: ${INFOBIP_SENDER_EMAIL:aurlinmika5@selfserve.worlds-connected.co}
 

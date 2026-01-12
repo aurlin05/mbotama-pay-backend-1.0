@@ -42,9 +42,9 @@ services:
       - key: INFOBIP_API_KEY
         sync: false  # Set in Render Dashboard
       - key: INFOBIP_BASE_URL
-        value: "https://9g3g39.api.infobip.com"
-      - key: INFOBIP_SENDER
-        value: "MbotamaPay"
+        value: "https://x1r9qq.api.infobip.com"
+      - key: INFOBIP_SENDER_EMAIL
+        value: "aurlinmika5@selfserve.worlds-connected.co"
       - key: FEEXPAY_API_URL
         value: "https://api.feexpay.me"
       - key: FEEXPAY_API_KEY
