@@ -111,6 +111,14 @@ public class KycService {
         kycDocumentRepository.save(document);
         log.info("KYC document submitted: userId={}, type={}", userId, request.getDocumentType());
 
+        // Si c'est un selfie et que l'utilisateur n'a pas de photo de profil, l'utiliser comme photo par défaut
+        if (request.getDocumentType() == DocumentType.SELFIE && 
+            (user.getProfilePictureUrl() == null || user.getProfilePictureUrl().isBlank())) {
+            user.setProfilePictureUrl(request.getDocumentUrl());
+            userRepository.save(user);
+            log.info("Selfie set as profile picture for user: {}", userId);
+        }
+
         // Auto-approve in development/demo mode to allow immediate progression
         if (autoApprove) {
             document.setVerificationStatus(VerificationStatus.APPROVED);
