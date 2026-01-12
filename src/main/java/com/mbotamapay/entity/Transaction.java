@@ -77,11 +77,11 @@ public class Transaction {
     // --- Routing fields ---
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "source_country", length = 5)
+    @Column(name = "source_country", length = 20)
     private Country sourceCountry;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "dest_country", length = 5)
+    @Column(name = "dest_country", length = 20)
     private Country destCountry;
 
     @Enumerated(EnumType.STRING)
