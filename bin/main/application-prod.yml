@@ -22,7 +22,6 @@ spring:
     properties:
       hibernate:
         format_sql: false
-        dialect: org.hibernate.dialect.PostgreSQLDialect
   
   # Flyway Migrations
   flyway:
@@ -91,9 +90,11 @@ email:
 brevo:
   api-key: ${BREVO_API_KEY:}
 
-# Twilio SMS Configuration (Production)
-twilio:
-  account-sid: ${TWILIO_ACCOUNT_SID:}
-  auth-token: ${TWILIO_AUTH_TOKEN:}
-  phone-number: ${TWILIO_PHONE_NUMBER:}
-  enabled: ${TWILIO_ENABLED:true}
+# SMS/Email Configuration (Infobip)
+sms:
+  enabled: ${SMS_ENABLED:true}
+  infobip:
+    api-key: ${INFOBIP_API_KEY:}
+    base-url: ${INFOBIP_BASE_URL:https://x1r9qq.api.infobip.com}
+    sender-email: ${INFOBIP_SENDER_EMAIL:aurlinmika5@selfserve.worlds-connected.co}
+

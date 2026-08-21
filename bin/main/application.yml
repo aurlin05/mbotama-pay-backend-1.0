@@ -24,7 +24,6 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        dialect: org.hibernate.dialect.PostgreSQLDialect
   
   # Flyway Migrations
   flyway:
@@ -149,6 +148,24 @@ routing:
   stock-threshold-alert: 100000
   auto-config:
     enabled: false
+  # Smart Orchestrator Settings
+  use-smart-orchestrator: true
+  max-retries: 3
+  split-threshold: 5000000  # 5M XOF - au-delà, split entre gateways
+  min-score-threshold: 30   # Score minimum pour considérer une route
+  prefer-same-gateway: true
+  # Bridge Routing Settings
+  enable-bridge-routing: true  # Activer le routage via ponts
+  bridge-fee-overhead: 0.50    # Frais additionnels par hop (%)
+  max-bridge-hops: 2           # Nombre max de pays intermédiaires
+  # Scoring Weights (total = 100)
+  score:
+    weight:
+      cost: 30        # Importance des frais
+      reliability: 30 # Importance de la fiabilité
+      speed: 15       # Importance de la vitesse
+      stock: 15       # Importance du stock disponible
+      operator: 10    # Importance du support opérateur
 
 # Fee Configuration
 fees:
@@ -156,9 +173,10 @@ fees:
   max-total-percent: 7.0
   min-fee-amount: 100
 
-# Twilio SMS Configuration
-twilio:
-  account-sid: ${TWILIO_ACCOUNT_SID:}
-  auth-token: ${TWILIO_AUTH_TOKEN:}
-  phone-number: ${TWILIO_PHONE_NUMBER:}
-  enabled: ${TWILIO_ENABLED:false}
+# SMS/Email Configuration (Infobip)
+sms:
+  enabled: ${SMS_ENABLED:false}
+  infobip:
+    api-key: ${INFOBIP_API_KEY:}
+    base-url: ${INFOBIP_BASE_URL:https://x1r9qq.api.infobip.com}
+    sender-email: ${INFOBIP_SENDER_EMAIL:aurlinmika5@selfserve.worlds-connected.co}
