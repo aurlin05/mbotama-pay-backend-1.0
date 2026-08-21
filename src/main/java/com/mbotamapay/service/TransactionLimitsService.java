@@ -151,8 +151,12 @@ public class TransactionLimitsService {
      * Valider les limites du corridor
      */
     private void validateCorridorLimits(Long amount, Country sourceCountry, Country destCountry) {
+        // Les corridors sont indexés par code ISO ("SN-CI") en configuration.
+        // L'appel passait auparavant Country.name(), donc "SENEGAL-COTE_DIVOIRE" :
+        // aucune clé ne correspondait et tous les corridors retombaient sur le
+        // défaut permissif, y compris ceux explicitement désactivés.
         TransactionLimitsConfig.CorridorLimit corridorLimit = limitsConfig.getCorridorLimit(
-                sourceCountry.name(), destCountry.name());
+                sourceCountry.getIsoCode(), destCountry.getIsoCode());
 
         // Vérifier si le corridor est actif
         if (!corridorLimit.getEnabled()) {

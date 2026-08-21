@@ -100,6 +100,18 @@ public class Transaction {
     @Builder.Default
     private Long gatewayFee = 0L;
 
+    /**
+     * Motif d'échec technique.
+     *
+     * <p>
+     * Champ dédié : le message d'erreur écrasait auparavant
+     * {@link #description}, c'est-à-dire le libellé saisi par l'expéditeur — perte
+     * définitive d'une donnée utilisateur, et fuite d'un détail interne dans un
+     * champ restitué au client.
+     */
+    @Column(name = "failure_reason", length = 500)
+    private String failureReason;
+
     @Column(name = "app_fee")
     @Builder.Default
     private Long appFee = 0L;

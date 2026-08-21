@@ -8,6 +8,14 @@ spring:
     name: mbotamapay-backend
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:local}
+
+  # Plafonds de transaction et corridors.
+  # Ce fichier n'était chargé par aucun profil : Spring ne charge un
+  # application-{nom}.yml que si le profil correspondant est actif, et « limits »
+  # ne l'était jamais. TransactionLimitsConfig retombait donc sur ses valeurs Java
+  # par défaut, avec une carte de corridors vide.
+  config:
+    import: classpath:application-limits.yml
   
   # PostgreSQL Database Configuration
   datasource:
@@ -123,55 +131,162 @@ brevo:
 
 # Payment Gateways Configuration
 gateway:
+  # Client HTTP partagé. Les passerelles construisaient chacune leur RestTemplate
+  # sans délai d'expiration : un partenaire muet immobilisait le fil et, avec les
+  # appels alors placés dans une transaction JPA, une connexion du pool.
+  http:
+    connect-timeout-ms: ${GATEWAY_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${GATEWAY_READ_TIMEOUT_MS:15000}
+
+  # Redéfinition de la couverture partenaire sans redéploiement.
+  # La couverture d'un agrégateur évolue indépendamment du code — elle a déjà
+  # divergé une fois. Renseigner ici prime sur les valeurs codées, et le contrôle
+  # de cohérence au démarrage vérifie aussitôt que la table de routes suit.
+  #
+  # capabilities:
+  #   feexpay:
+  #     payout-countries: BENIN,TOGO,COTE_DIVOIRE,CONGO_BRAZZAVILLE,SENEGAL
+  #     collection-countries: BENIN,TOGO,COTE_DIVOIRE,CONGO_BRAZZAVILLE,SENEGAL
+  #     currencies: XOF,XAF
+  #     operators: MTN_BJ,MOOV_BJ,CELTIIS_BJ,ORANGE_SN,WAVE_SN,FREE_SN
+
   # FeexPay - https://feexpay.me
   feexpay:
+    enabled: ${FEEXPAY_ENABLED:true}
     api-url: ${FEEXPAY_API_URL:https://api.feexpay.me}
     api-key: ${FEEXPAY_API_KEY:}
     shop-id: ${FEEXPAY_SHOP_ID:}
-  
+
   # CinetPay - https://cinetpay.com
   cinetpay:
+    enabled: ${CINETPAY_ENABLED:true}
     api-url: ${CINETPAY_API_URL:https://api-checkout.cinetpay.com/v2}
+    transfer-url: ${CINETPAY_TRANSFER_URL:https://api.cinetpay.com/v1/transfer}
     api-key: ${CINETPAY_API_KEY:}
     site-id: ${CINETPAY_SITE_ID:}
-  
+
   # PayTech - https://paytech.sn
   paytech:
+    enabled: ${PAYTECH_ENABLED:true}
     api-url: ${PAYTECH_API_URL:https://paytech.sn/api}
     api-key: ${PAYTECH_API_KEY:}
     api-secret: ${PAYTECH_API_SECRET:}
 
-# Payment Routing Configuration
+  # PayDunya - https://paydunya.com (zone UEMOA)
+  # Désactivé tant que l'intégration n'a pas été validée en recette.
+  paydunya:
+    enabled: ${PAYDUNYA_ENABLED:false}
+    api-url: ${PAYDUNYA_API_URL:https://app.paydunya.com/api/v1}
+    checkout-path: ${PAYDUNYA_CHECKOUT_PATH:/checkout-invoice/create}
+    checkout-status-path: ${PAYDUNYA_CHECKOUT_STATUS_PATH:/checkout-invoice/confirm}
+    disburse-invoice-path: ${PAYDUNYA_DISBURSE_INVOICE_PATH:/disburse/get-invoice}
+    disburse-submit-path: ${PAYDUNYA_DISBURSE_SUBMIT_PATH:/disburse/submit-invoice}
+    master-key: ${PAYDUNYA_MASTER_KEY:}
+    private-key: ${PAYDUNYA_PRIVATE_KEY:}
+    token: ${PAYDUNYA_TOKEN:}
+
+  # Monetbil - https://monetbil.com (CEMAC)
+  monetbil:
+    enabled: ${MONETBIL_ENABLED:false}
+    api-url: ${MONETBIL_API_URL:https://api.monetbil.com}
+    payment-path: ${MONETBIL_PAYMENT_PATH:/payment/v1/placePayment}
+    payment-status-path: ${MONETBIL_PAYMENT_STATUS_PATH:/payment/v1/checkPayment}
+    payout-path: ${MONETBIL_PAYOUT_PATH:/v1/payouts}
+    service-key: ${MONETBIL_SERVICE_KEY:}
+    service-secret: ${MONETBIL_SERVICE_SECRET:}
+
+# Moteur de routage
 routing:
-  enabled: true
-  prefer-direct-route: true
-  stock-threshold-alert: 100000
-  auto-config:
-    enabled: false
-  # Smart Orchestrator Settings
-  use-smart-orchestrator: true
-  max-retries: 3
-  split-threshold: 5000000  # 5M XOF - au-delà, split entre gateways
-  min-score-threshold: 30   # Score minimum pour considérer une route
-  prefer-same-gateway: true
-  # Bridge Routing Settings
-  enable-bridge-routing: true  # Activer le routage via ponts
-  bridge-fee-overhead: 0.50    # Frais additionnels par hop (%)
-  max-bridge-hops: 2           # Nombre max de pays intermédiaires
-  # Scoring Weights (total = 100)
+  # Graphe de routes tenu en mémoire : la recherche de pont interrogeait la base
+  # une à deux fois par pays candidat.
+  matrix:
+    refresh-ms: ${ROUTING_MATRIX_REFRESH_MS:300000}
+
+  # Contrôle de cohérence entre la table de routes, les capacités déclarées par
+  # les passerelles et le catalogue opérateurs. À passer à true en production.
+  validation:
+    fail-on-inconsistency: ${ROUTING_FAIL_ON_INCONSISTENCY:false}
+
+  # Scoring — phase 2. Ne note que des routes déjà jugées exécutables.
+  # Les poids doivent totaliser 100, vérifié au démarrage.
   score:
     weight:
-      cost: 30        # Importance des frais
-      reliability: 30 # Importance de la fiabilité
-      speed: 15       # Importance de la vitesse
-      stock: 15       # Importance du stock disponible
-      operator: 10    # Importance du support opérateur
+      cost: 35         # coût réel pour l'expéditeur, plancher inclus
+      margin: 20       # marge nette plateforme, signée
+      reliability: 30  # taux de succès observé, avec prior
+      latency: 15      # latence observée
+    # Prior bayésien : (succès + α) / (total + α + β).
+    # Sans lui, une passerelle jamais utilisée valait 100 en fiabilité et battait
+    # une passerelle éprouvée — et chaque redémarrage remettait tout à « parfait ».
+    prior:
+      alpha: 1
+      beta: 4
+    latency-ceiling-ms: 10000
+    cold-start-latency: 20
+
+  # Disjoncteur par passerelle
+  circuit:
+    failure-threshold: ${ROUTING_CIRCUIT_THRESHOLD:5}
+    recovery-timeout-ms: ${ROUTING_CIRCUIT_RECOVERY_MS:300000}
+    window-minutes: 60
+
+  # Exécution du versement
+  execution:
+    max-attempts: 3
+    # Un réessai après expiration de délai peut produire un double versement :
+    # l'issue du premier appel est inconnue. À n'activer qu'une fois
+    # l'idempotence de bout en bout en place.
+    retry-on-timeout: false
+
+  # Liquidité : l'absence de ligne de stock signifie « la passerelle finance sur
+  # son propre flottant ». Passer à true impose un stock déclaré par corridor.
+  liquidity:
+    require-declared-stock: false
+
+  # Routage par pays intermédiaire
+  bridge:
+    enabled: ${ROUTING_BRIDGE_ENABLED:true}
+    max-hops: 2
+    fee-overhead-percent: 0.50
+    # Comptes de transit réels, format ISO:numéro. Tant qu'un pays traversé n'y
+    # figure pas, le pont est calculé et affiché mais refusé à l'exécution —
+    # l'implémentation multi-tronçons n'a ni montant net par tronçon ni
+    # compensation en cas d'échec intermédiaire.
+    transit-accounts: ${ROUTING_TRANSIT_ACCOUNTS:}
+
+  # Devis épinglé : lie le prix affiché au prix débité.
+  quote:
+    enabled: true
+    ttl-seconds: ${ROUTING_QUOTE_TTL:180}
+    cleanup-cron: "0 15 * * * *"
+
+  # Taux de conversion entre devises de corridor.
+  # Règle : pas de taux, pas de corridor. Un corridor dont les devises diffèrent
+  # et pour lequel aucun taux n'est déclaré est refusé, avec motif.
+  # XOF et XAF sont à parité (toutes deux arrimées à l'euro à 655,957) mais
+  # restent deux devises distinctes : l'étiquette envoyée au partenaire compte.
+  # GNF et CDF sont volontairement absents — leurs corridors resteront fermés
+  # tant qu'un taux n'aura pas été fourni.
+  fx:
+    rates:
+      XOF-XAF: 1.0
+
+# Transferts
+transfer:
+  # Exige un encaissement confirmé avant tout versement.
+  # Le flux ne comporte aujourd'hui aucune étape d'encaissement : chaque
+  # transfert réussi est une sortie nette de trésorerie. Passer à true dès que
+  # la collecte est branchée. Le démarrage signale la valeur false.
+  require-collection-confirmed: ${TRANSFER_REQUIRE_COLLECTION:false}
 
 # Fee Configuration
 fees:
   app-fee-percent: 2.0
   max-total-percent: 7.0
   min-fee-amount: 100
+  # Plancher de frais par devise. 100 unités ont un sens en XOF, aucun en GNF
+  # (environ sept francs CFA) ni en CDF.
+  min-fee-by-currency: "{XOF: 100, XAF: 100}"
 
 # SMS/Email Configuration (Infobip)
 sms:

@@ -37,7 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
                 type = FilterType.ASSIGNABLE_TYPE,
                 classes = {com.mbotamapay.config.RateLimitFilter.class}
         ))
-@Import(SecurityConfig.class)
+@Import({SecurityConfig.class, JwtAuthenticationFilter.class})
 class PaymentControllerTest {
 
     @Autowired
@@ -58,8 +58,11 @@ class PaymentControllerTest {
     @MockBean
     private TokenBlacklistService tokenBlacklistService;
 
-    @MockBean
-    private JwtAuthenticationFilter jwtAuthenticationFilter;
+    // Le filtre JWT est importé en vrai, pas simulé : un mock de filtre servlet
+    // ne rappelle jamais filterChain.doFilter(), la chaîne de sécurité s'arrête
+    // donc au premier maillon et toutes les requêtes ressortent en 200 vide.
+    // Ses dépendances (JwtService, UserDetailsService, TokenBlacklistService)
+    // sont, elles, simulées ci-dessus.
 
     @MockBean
     private FeexPayGateway feexPayGateway;

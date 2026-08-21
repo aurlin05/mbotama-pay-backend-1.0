@@ -27,9 +27,21 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
 
     private static final String PLATFORM_NAME = "feexpay";
 
-    private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
-            Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
-            Country.CONGO_BRAZZAVILLE);
+    private static final com.mbotamapay.gateway.GatewayCapabilities DEFAULT_CAPABILITIES =
+            new com.mbotamapay.gateway.GatewayCapabilities(
+                    GatewayType.FEEXPAY,
+                    EnumSet.of(Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
+                            Country.CONGO_BRAZZAVILLE),
+                    EnumSet.of(Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
+                            Country.CONGO_BRAZZAVILLE),
+                    Set.of("XOF", "XAF"),
+                    EnumSet.of(
+                            MobileOperator.MTN_BJ, MobileOperator.MOOV_BJ, MobileOperator.CELTIIS_BJ,
+                            MobileOperator.TOGOCOM_TG, MobileOperator.MOOV_TG,
+                            MobileOperator.ORANGE_CI, MobileOperator.MTN_CI,
+                            MobileOperator.MOOV_CI, MobileOperator.WAVE_CI,
+                            MobileOperator.MTN_CG),
+                    true);
 
     @Value("${gateway.feexpay.api-url:https://api.feexpay.me}")
     private String apiUrl;
@@ -40,10 +52,45 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
     @Value("${gateway.feexpay.shop-id:}")
     private String shopId;
 
-    private final RestTemplate restTemplate;
+    @Value("${gateway.feexpay.enabled:true}")
+    private boolean enabled;
 
-    public FeexPayGateway() {
-        this.restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
+
+    /**
+     * Couverture effective, résolue au démarrage.
+     *
+     * <p>
+     * La liste ci-dessus n'est qu'un défaut : la couverture d'un agrégateur évolue
+     * indépendamment du code. Elle se redéfinit par
+     * {@code gateway.capabilities.feexpay.payout-countries} sans redéploiement, et
+     * le contrôle de cohérence au démarrage vérifie aussitôt que la table de
+     * routes suit.
+     */
+    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+
+    public FeexPayGateway(
+            @org.springframework.beans.factory.annotation.Qualifier(
+                    com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
+            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+        this.restTemplate = restTemplate;
+        this.overrides = overrides;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void resolveCapabilities() {
+        this.capabilities = overrides.resolve(GatewayType.FEEXPAY, DEFAULT_CAPABILITIES);
+    }
+
+    @Override
+    public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
+        return capabilities;
+    }
+
+    @Override
+    public boolean isOperational() {
+        return enabled && !apiKey.isBlank() && !shopId.isBlank();
     }
 
     @Override
@@ -59,16 +106,6 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
     @Override
     public GatewayType getGatewayType() {
         return GatewayType.FEEXPAY;
-    }
-
-    @Override
-    public Set<Country> getSupportedPayoutCountries() {
-        return PAYOUT_COUNTRIES;
-    }
-
-    @Override
-    public boolean supportsPayoutTo(Country country) {
-        return PAYOUT_COUNTRIES.contains(country);
     }
 
     @Override

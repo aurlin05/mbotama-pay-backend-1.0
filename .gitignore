@@ -29,3 +29,6 @@ logs/
 # Environment
 .env
 *.env.local
+
+# Build output (IDE)
+bin/

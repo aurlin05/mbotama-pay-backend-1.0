@@ -26,8 +26,28 @@ public class PayTechGateway implements PaymentGateway, PayoutGateway {
 
     private static final String PLATFORM_NAME = "paytech";
 
-    private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
-            Country.SENEGAL, Country.COTE_DIVOIRE, Country.MALI);
+    /**
+     * Couverture réduite au Sénégal et au Mali.
+     *
+     * <p>
+     * La Côte d'Ivoire était déclarée ici, mais aucun opérateur ivoirien ne
+     * déclare PayTech dans le catalogue opérateurs, et l'intégration n'a pas été
+     * validée sur ce marché. Le contrôle de cohérence au démarrage signalait la
+     * contradiction : plutôt que de la faire taire en déclarant les opérateurs
+     * ivoiriens joignables sans preuve, la couverture est ramenée à ce qui est
+     * établi. Les routes PayTech vers la Côte d'Ivoire sont désactivées en base
+     * (migration V17) et à réactiver une fois la couverture confirmée par le
+     * partenaire.
+     */
+    private static final com.mbotamapay.gateway.GatewayCapabilities DEFAULT_CAPABILITIES =
+            new com.mbotamapay.gateway.GatewayCapabilities(
+                    GatewayType.PAYTECH,
+                    EnumSet.of(Country.SENEGAL, Country.MALI),
+                    EnumSet.of(Country.SENEGAL, Country.MALI),
+                    Set.of("XOF"),
+                    EnumSet.of(MobileOperator.ORANGE_SN, MobileOperator.WAVE_SN,
+                            MobileOperator.ORANGE_ML),
+                    true);
 
     @Value("${gateway.paytech.api-url:https://paytech.sn/api}")
     private String apiUrl;
@@ -38,10 +58,36 @@ public class PayTechGateway implements PaymentGateway, PayoutGateway {
     @Value("${gateway.paytech.api-secret:}")
     private String apiSecret;
 
-    private final RestTemplate restTemplate;
+    @Value("${gateway.paytech.enabled:true}")
+    private boolean enabled;
 
-    public PayTechGateway() {
-        this.restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
+
+    /** Couverture effective, redéfinissable par {@code gateway.capabilities.paytech.*}. */
+    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+
+    public PayTechGateway(
+            @org.springframework.beans.factory.annotation.Qualifier(
+                    com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
+            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+        this.restTemplate = restTemplate;
+        this.overrides = overrides;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void resolveCapabilities() {
+        this.capabilities = overrides.resolve(GatewayType.PAYTECH, DEFAULT_CAPABILITIES);
+    }
+
+    @Override
+    public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
+        return capabilities;
+    }
+
+    @Override
+    public boolean isOperational() {
+        return enabled && !apiKey.isBlank() && !apiSecret.isBlank();
     }
 
     @Override
@@ -57,16 +103,6 @@ public class PayTechGateway implements PaymentGateway, PayoutGateway {
     @Override
     public GatewayType getGatewayType() {
         return GatewayType.PAYTECH;
-    }
-
-    @Override
-    public Set<Country> getSupportedPayoutCountries() {
-        return PAYOUT_COUNTRIES;
-    }
-
-    @Override
-    public boolean supportsPayoutTo(Country country) {
-        return PAYOUT_COUNTRIES.contains(country);
     }
 
     @Override

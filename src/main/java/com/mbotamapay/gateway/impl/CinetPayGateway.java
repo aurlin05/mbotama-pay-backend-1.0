@@ -29,11 +29,36 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
 
     private static final Set<Country> PAYOUT_COUNTRIES = EnumSet.of(
             Country.COTE_DIVOIRE, Country.SENEGAL, Country.MALI, Country.GUINEA,
-            Country.CAMEROON, Country.BURKINA_FASO, Country.BENIN, Country.TOGO, 
+            Country.CAMEROON, Country.BURKINA_FASO, Country.BENIN, Country.TOGO,
             Country.NIGER, Country.DRC);
+
+    private static final com.mbotamapay.gateway.GatewayCapabilities DEFAULT_CAPABILITIES =
+            new com.mbotamapay.gateway.GatewayCapabilities(
+                    GatewayType.CINETPAY,
+                    PAYOUT_COUNTRIES,
+                    PAYOUT_COUNTRIES,
+                    // XOF (CI, SN, ML, BF, BJ, TG, NE), GNF (GN), XAF (CM), CDF (CD)
+                    Set.of("XOF", "GNF", "XAF", "CDF"),
+                    EnumSet.of(
+                            MobileOperator.ORANGE_CI, MobileOperator.MTN_CI,
+                            MobileOperator.MOOV_CI, MobileOperator.WAVE_CI,
+                            MobileOperator.ORANGE_SN, MobileOperator.FREE_SN, MobileOperator.WAVE_SN,
+                            MobileOperator.ORANGE_ML, MobileOperator.MOOV_ML,
+                            MobileOperator.ORANGE_GN, MobileOperator.MTN_GN,
+                            MobileOperator.ORANGE_CM, MobileOperator.MTN_CM,
+                            MobileOperator.ORANGE_BF, MobileOperator.MOOV_BF,
+                            MobileOperator.MTN_BJ, MobileOperator.MOOV_BJ,
+                            MobileOperator.TOGOCOM_TG, MobileOperator.MOOV_TG,
+                            MobileOperator.AIRTEL_NE, MobileOperator.MOOV_NE,
+                            MobileOperator.ORANGE_CD, MobileOperator.VODACOM_CD,
+                            MobileOperator.AIRTEL_CD),
+                    true);
 
     @Value("${gateway.cinetpay.api-url:https://api-checkout.cinetpay.com/v2}")
     private String apiUrl;
+
+    @Value("${gateway.cinetpay.transfer-url:https://api.cinetpay.com/v1/transfer}")
+    private String transferUrl;
 
     @Value("${gateway.cinetpay.api-key:}")
     private String apiKey;
@@ -41,10 +66,36 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
     @Value("${gateway.cinetpay.site-id:}")
     private String siteId;
 
-    private final RestTemplate restTemplate;
+    @Value("${gateway.cinetpay.enabled:true}")
+    private boolean enabled;
 
-    public CinetPayGateway() {
-        this.restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate;
+    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
+
+    /** Couverture effective, redéfinissable par {@code gateway.capabilities.cinetpay.*}. */
+    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+
+    public CinetPayGateway(
+            @org.springframework.beans.factory.annotation.Qualifier(
+                    com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
+            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+        this.restTemplate = restTemplate;
+        this.overrides = overrides;
+    }
+
+    @jakarta.annotation.PostConstruct
+    void resolveCapabilities() {
+        this.capabilities = overrides.resolve(GatewayType.CINETPAY, DEFAULT_CAPABILITIES);
+    }
+
+    @Override
+    public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
+        return capabilities;
+    }
+
+    @Override
+    public boolean isOperational() {
+        return enabled && !apiKey.isBlank() && !siteId.isBlank();
     }
 
     @Override
@@ -60,16 +111,6 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
     @Override
     public GatewayType getGatewayType() {
         return GatewayType.CINETPAY;
-    }
-
-    @Override
-    public Set<Country> getSupportedPayoutCountries() {
-        return PAYOUT_COUNTRIES;
-    }
-
-    @Override
-    public boolean supportsPayoutTo(Country country) {
-        return PAYOUT_COUNTRIES.contains(country);
     }
 
     @Override
@@ -156,7 +197,7 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
             ResponseEntity<Map> response = restTemplate.exchange(
-                    "https://api.cinetpay.com/v1/transfer/contact/money/send/contact",
+                    transferUrl + "/contact/money/send/contact",
                     HttpMethod.POST,
                     entity,
                     Map.class);
@@ -208,7 +249,7 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
 
             ResponseEntity<Map> response = restTemplate.exchange(
-                    "https://api.cinetpay.com/v1/transfer/check",
+                    transferUrl + "/check",
                     HttpMethod.POST,
                     entity,
                     Map.class);

@@ -21,14 +21,29 @@ public interface PayoutGateway {
     GatewayType getGatewayType();
 
     /**
-     * Retourne les pays supportés pour le payout
+     * Déclaration unique de ce que la passerelle sait faire.
+     *
+     * <p>
+     * C'est la source consultée par la porte d'éligibilité du moteur de routage.
+     * Toutes les autres méthodes de capacité en dérivent.
      */
-    Set<Country> getSupportedPayoutCountries();
+    GatewayCapabilities capabilities();
 
     /**
-     * Vérifie si cette passerelle supporte le payout vers un pays
+     * Indique si la passerelle est configurée et autorisée à traiter du trafic
+     * réel. Une passerelle intégrée mais non validée en sandbox retourne false :
+     * le moteur l'écarte alors avec un motif explicite plutôt que d'échouer à
+     * l'exécution.
      */
-    boolean supportsPayoutTo(Country country);
+    boolean isOperational();
+
+    default Set<Country> getSupportedPayoutCountries() {
+        return capabilities().payoutCountries();
+    }
+
+    default boolean supportsPayoutTo(Country country) {
+        return capabilities().canPayoutTo(country);
+    }
 
     /**
      * Initie un payout (envoi d'argent)
@@ -42,15 +57,15 @@ public interface PayoutGateway {
 
     /**
      * Vérifie si un numéro a un compte Mobile Money actif
-     * 
+     *
      * @param phoneNumber Numéro de téléphone normalisé
      * @param country     Pays du numéro
      * @param operator    Opérateur mobile
-     * @return Résultat de la vérification
+     * @return Résultat de la vérification, ou null si la passerelle n'offre pas ce
+     *         service
      */
     default MobileMoneyVerificationResult verifySubscriber(
             String phoneNumber, Country country, MobileOperator operator) {
-        // Implémentation par défaut: pas de vérification API disponible
         return null;
     }
 }

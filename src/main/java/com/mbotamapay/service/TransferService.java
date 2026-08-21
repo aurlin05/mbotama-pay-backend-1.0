@@ -1,555 +1,235 @@
 package com.mbotamapay.service;
 
 import com.mbotamapay.dto.FeeBreakdown;
-import com.mbotamapay.dto.routing.RoutingDecision;
-import com.mbotamapay.entity.GatewayStock;
+import com.mbotamapay.entity.RouteQuote;
 import com.mbotamapay.entity.Transaction;
 import com.mbotamapay.entity.User;
-import com.mbotamapay.entity.enums.Country;
-import com.mbotamapay.entity.enums.GatewayType;
-import com.mbotamapay.entity.enums.MobileOperator;
 import com.mbotamapay.entity.enums.TransactionStatus;
 import com.mbotamapay.exception.BadRequestException;
 import com.mbotamapay.exception.ResourceNotFoundException;
-import com.mbotamapay.gateway.PayoutGateway;
 import com.mbotamapay.gateway.dto.PayoutRequest;
-import com.mbotamapay.gateway.dto.PayoutResponse;
-import com.mbotamapay.repository.GatewayStockRepository;
 import com.mbotamapay.repository.TransactionRepository;
 import com.mbotamapay.repository.UserRepository;
-import com.mbotamapay.service.orchestration.*;
-import com.mbotamapay.service.orchestration.SmartPaymentOrchestrator.*;
+import com.mbotamapay.routing.*;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Service d'orchestration des transferts de bout en bout
- * 
- * Flux:
- * 1. Valider l'utilisateur et les limites
- * 2. Utiliser SmartPaymentOrchestrator pour le routage intelligent
- * 3. Exécuter avec fallback automatique
- * 4. Enregistrer les métriques
+ * Orchestration d'un transfert de bout en bout.
+ *
+ * <p>
+ * Découpage transactionnel : l'intention est écrite et <strong>validée</strong>
+ * avant l'appel partenaire, le résultat est écrit après. Les deux opérations ont
+ * leur propre transaction courte. Auparavant l'ensemble — routage, contrôles,
+ * appels HTTP, écritures — tenait dans une seule transaction JPA : une
+ * exception après le versement annulait la ligne de transaction alors que
+ * l'argent était parti, et il ne restait aucune trace.
  */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class TransferService {
 
-    private final SmartPaymentOrchestrator orchestrator;
-    private final RoutingAnalytics analytics;
-    private final PaymentRoutingService routingService;
-    private final FeeCalculator feeCalculator;
+    private final RoutingEngine routingEngine;
+    private final RouteQuoteService quoteService;
+    private final PayoutExecutor payoutExecutor;
     private final TransactionLimitsService transactionLimitsService;
-    private final TransactionRepository transactionRepository;
+    private final TransferLedger ledger;
     private final UserRepository userRepository;
-    private final GatewayStockRepository stockRepository;
-    private final List<PayoutGateway> payoutGateways;
-
-    @Value("${routing.use-smart-orchestrator:true}")
-    private boolean useSmartOrchestrator;
 
     /**
-     * Exécute un transfert complet avec orchestration intelligente
+     * Exige qu'un encaissement soit confirmé avant tout versement.
+     *
+     * <p>
+     * Le flux ne comporte aujourd'hui aucune étape d'encaissement : chaque
+     * transfert réussi est une sortie nette de trésorerie. Le garde-fou existe
+     * pour être activé dès que l'encaissement sera branché ; il est faux par
+     * défaut pour ne pas interrompre le service, et le démarrage le signale.
      */
-    @Transactional
-    public TransferResult executeTransfer(Long userId, TransferRequest request) {
-        log.info("Executing transfer: userId={}, recipient={}, amount={}",
-                userId, request.getRecipientPhone(), request.getAmount());
+    @Value("${transfer.require-collection-confirmed:false}")
+    private boolean requireCollectionConfirmed;
 
-        // 1. Valider l'utilisateur
-        User sender = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
-
-        // 2. Utiliser l'orchestrateur intelligent ou le routage classique
-        if (useSmartOrchestrator) {
-            return executeWithSmartOrchestrator(sender, request);
-        } else {
-            return executeWithClassicRouting(sender, request);
+    @PostConstruct
+    void warnOnMissingCollection() {
+        if (!requireCollectionConfirmed) {
+            log.warn("⚠ transfer.require-collection-confirmed=false : les versements sont exécutés "
+                    + "sans encaissement préalable de l'expéditeur. À activer dès que le flux "
+                    + "d'encaissement est en place.");
         }
     }
+
+    // ==================================================================
+    // Prévisualisation
+    // ==================================================================
 
     /**
-     * Exécution avec l'orchestrateur intelligent (fallback, scoring, métriques)
-     */
-    private TransferResult executeWithSmartOrchestrator(User sender, TransferRequest request) {
-        // 1. Orchestrer le routage
-        OrchestrationRequest orchRequest = OrchestrationRequest.builder()
-                .senderPhone(request.getSenderPhone())
-                .recipientPhone(request.getRecipientPhone())
-                .recipientName(request.getRecipientName())
-                .amount(request.getAmount())
-                .currency("XOF")
-                .description(request.getDescription())
-                .build();
-
-        OrchestrationResult orchestration = orchestrator.orchestrate(orchRequest);
-
-        if (!orchestration.isSuccess()) {
-            throw new BadRequestException("Routage impossible: " + orchestration.getErrorMessage());
-        }
-
-        // 2. Vérifier les limites
-        transactionLimitsService.validateTransaction(
-                sender,
-                request.getAmount(),
-                orchestration.getSourceCountry(),
-                orchestration.getDestCountry()
-        );
-
-        // 3. Créer la transaction
-        String reference = generateReference();
-        Transaction transaction = createTransactionFromOrchestration(sender, request, orchestration, reference);
-        transaction = transactionRepository.save(transaction);
-
-        log.info("Transaction created: id={}, strategy={}, primaryGateway={}",
-                transaction.getId(),
-                orchestration.getStrategy().getType(),
-                orchestration.getStrategy().getPrimaryGateway());
-
-        // 4. Exécuter avec fallback automatique ou bridge
-        PayoutRequest payoutRequest = buildPayoutRequest(request, orchestration, reference);
-        PayoutExecutionResult execResult;
-        
-        if (orchestration.isBridgePayment()) {
-            // Exécution bridge (multi-legs)
-            log.info("Executing bridge payment: {}", orchestration.getBridgeRoute().getRouteDescription());
-            execResult = orchestrator.executeBridgePayment(orchestration, payoutRequest);
-        } else {
-            // Exécution standard avec fallback
-            execResult = orchestrator.executeWithFallback(orchestration, payoutRequest);
-        }
-
-        // 5. Mettre à jour la transaction et enregistrer les métriques
-        if (execResult.isSuccess()) {
-            transaction.setStatus(TransactionStatus.PENDING);
-            if (execResult.getResponse() != null) {
-                transaction.setExternalReference(execResult.getResponse().getExternalReference());
-            }
-            transaction.setPayoutGateway(execResult.getGateway());
-
-            // Enregistrer le succès dans les analytics
-            if (orchestration.isBridgePayment()) {
-                analytics.recordBridgeSuccess(
-                        orchestration.getSourceCountry(),
-                        orchestration.getDestCountry(),
-                        orchestration.getBridgeRoute().getBridgeCountries(),
-                        request.getAmount(),
-                        transaction.getFee(),
-                        execResult.getExecutionTimeMs(),
-                        orchestration.getBridgeRoute().getHopCount()
-                );
-            } else {
-                analytics.recordSuccess(
-                        execResult.getGateway(),
-                        orchestration.getSourceCountry(),
-                        orchestration.getDestCountry(),
-                        request.getAmount(),
-                        transaction.getFee(),
-                        execResult.getExecutionTimeMs()
-                );
-            }
-
-            // Log si fallback utilisé
-            if (execResult.getAttemptNumber() > 1) {
-                log.info("Transfer succeeded after {} attempts (fallback used)", execResult.getAttemptNumber());
-                for (FailedAttempt failed : execResult.getFailedAttempts()) {
-                    analytics.recordFallback(
-                            failed.getGateway(),
-                            execResult.getGateway(),
-                            orchestration.getSourceCountry(),
-                            orchestration.getDestCountry(),
-                            failed.getReason()
-                    );
-                }
-            }
-        } else {
-            transaction.setStatus(TransactionStatus.FAILED);
-            transaction.setDescription("Payout failed after " + execResult.getTotalAttempts() + " attempts: " + 
-                    execResult.getErrorMessage());
-
-            // Enregistrer l'échec
-            if (orchestration.isBridgePayment() && execResult.getBridgeLegResults() != null) {
-                // Trouver le leg qui a échoué
-                int failedLeg = execResult.getBridgeLegResults().stream()
-                        .filter(leg -> !leg.isSuccess())
-                        .findFirst()
-                        .map(BridgeLegResult::getLegNumber)
-                        .orElse(1);
-                
-                analytics.recordBridgeFailure(
-                        orchestration.getSourceCountry(),
-                        orchestration.getDestCountry(),
-                        orchestration.getBridgeRoute().getBridgeCountries(),
-                        request.getAmount(),
-                        failedLeg,
-                        execResult.getErrorMessage()
-                );
-            } else if (execResult.getFailedAttempts() != null) {
-                for (FailedAttempt failed : execResult.getFailedAttempts()) {
-                    analytics.recordFailure(
-                            failed.getGateway(),
-                            orchestration.getSourceCountry(),
-                            orchestration.getDestCountry(),
-                            request.getAmount(),
-                            failed.getReason()
-                    );
-                }
-            }
-        }
-
-        transactionRepository.save(transaction);
-
-        return TransferResult.builder()
-                .success(execResult.isSuccess())
-                .transactionId(transaction.getId())
-                .reference(reference)
-                .amount(request.getAmount())
-                .fee(transaction.getFee())
-                .totalAmount(transaction.getTotalAmount())
-                .displayFeePercent(orchestration.getFees() != null ? orchestration.getFees().getDisplayPercent() : 0)
-                .status(transaction.getStatus().name())
-                .routingReason(buildRoutingReason(orchestration, execResult))
-                .message(execResult.isSuccess() ? "Transfert initié avec succès" : execResult.getErrorMessage())
-                .gateway(execResult.getGateway() != null ? execResult.getGateway().getDisplayName() : null)
-                .sourceCountry(orchestration.getSourceCountry().getDisplayName())
-                .destCountry(orchestration.getDestCountry().getDisplayName())
-                .build();
-    }
-
-    /**
-     * Exécution classique (sans orchestrateur intelligent)
-     */
-    private TransferResult executeWithClassicRouting(User sender, TransferRequest request) {
-        // Ancien code de routage
-        RoutingDecision routing = routingService.determineRoute(
-                request.getSenderPhone(),
-                request.getRecipientPhone(),
-                request.getAmount());
-
-        if (!routing.isRouteFound()) {
-            throw new BadRequestException("Aucune route disponible: " + routing.getRoutingReason());
-        }
-
-        validateTransactionLimits(sender, request.getAmount(), routing);
-
-        String reference = generateReference();
-        Transaction transaction = createTransaction(sender, request, routing, reference);
-        transaction = transactionRepository.save(transaction);
-
-        PayoutResponse payoutResult = executePayout(routing, request, reference);
-
-        if (payoutResult.isSuccess()) {
-            transaction.setStatus(TransactionStatus.PENDING);
-            transaction.setExternalReference(payoutResult.getExternalReference());
-
-            if (routing.isUseStock()) {
-                debitStock(routing.getPayoutGateway(), routing.getDestCountry(), request.getAmount());
-            }
-        } else {
-            transaction.setStatus(TransactionStatus.FAILED);
-            transaction.setDescription("Payout failed: " + payoutResult.getMessage());
-        }
-
-        transactionRepository.save(transaction);
-
-        return TransferResult.builder()
-                .success(payoutResult.isSuccess())
-                .transactionId(transaction.getId())
-                .reference(reference)
-                .amount(request.getAmount())
-                .fee(transaction.getFee())
-                .totalAmount(transaction.getTotalAmount())
-                .displayFeePercent(routing.getFees().getDisplayPercent())
-                .status(transaction.getStatus().name())
-                .routingReason(routing.getRoutingReason())
-                .message(payoutResult.isSuccess() ? "Transfert initié avec succès" : payoutResult.getMessage())
-                .gateway(routing.getPayoutGateway() != null ? routing.getPayoutGateway().getDisplayName() : null)
-                .sourceCountry(routing.getSourceCountry() != null ? routing.getSourceCountry().getDisplayName() : null)
-                .destCountry(routing.getDestCountry() != null ? routing.getDestCountry().getDisplayName() : null)
-                .build();
-    }
-
-    private Transaction createTransactionFromOrchestration(User sender, TransferRequest request,
-            OrchestrationResult orchestration, String reference) {
-        FeeBreakdown fees = orchestration.getFees();
-
-        return Transaction.builder()
-                .sender(sender)
-                .senderPhone(request.getSenderPhone())
-                .senderName(sender.getFullName())
-                .recipientPhone(request.getRecipientPhone())
-                .recipientName(request.getRecipientName())
-                .amount(request.getAmount())
-                .fee(fees != null ? fees.getTotalFee() : 0L)
-                .gatewayFee(fees != null ? fees.getGatewayFee() : 0L)
-                .appFee(fees != null ? fees.getAppFee() : 0L)
-                .currency("XOF")
-                .platform(orchestration.getStrategy().getPrimaryGateway().getCode())
-                .status(TransactionStatus.PENDING)
-                .description(request.getDescription())
-                .externalReference(reference)
-                .sourceCountry(orchestration.getSourceCountry())
-                .destCountry(orchestration.getDestCountry())
-                .collectionGateway(orchestration.getStrategy().getPrimaryGateway())
-                .payoutGateway(orchestration.getStrategy().getPrimaryGateway())
-                .usedStock(orchestration.getStrategy().isUseStock())
-                .build();
-    }
-
-    private PayoutRequest buildPayoutRequest(TransferRequest request, OrchestrationResult orchestration, String reference) {
-        return PayoutRequest.builder()
-                .reference(reference)
-                .amount(request.getAmount())
-                .currency("XOF")
-                .recipientPhone(request.getRecipientPhone())
-                .recipientName(request.getRecipientName())
-                .country(orchestration.getDestCountry())
-                .operator(orchestration.getDestOperator())
-                .description(request.getDescription())
-                .build();
-    }
-
-    private String buildRoutingReason(OrchestrationResult orchestration, PayoutExecutionResult execResult) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Strategy: ").append(orchestration.getStrategy().getType());
-        
-        if (orchestration.isBridgePayment()) {
-            sb.append(" | Bridge: ").append(orchestration.getBridgeRoute().getRouteDescription());
-            sb.append(" | Hops: ").append(orchestration.getBridgeRoute().getHopCount());
-            sb.append(" | Bridge Fee: ").append(orchestration.getBridgeRoute().getTotalFeePercent()).append("%");
-        } else {
-            sb.append(" | Score: ").append(orchestration.getStrategy().getPrimaryScore());
-        }
-        
-        if (execResult.isSuccess()) {
-            if (execResult.getGateway() != null) {
-                sb.append(" | Gateway: ").append(execResult.getGateway());
-            }
-            if (execResult.getAttemptNumber() > 1) {
-                sb.append(" (fallback après ").append(execResult.getAttemptNumber() - 1).append(" échec(s))");
-            }
-            if (execResult.getBridgeLegResults() != null && !execResult.getBridgeLegResults().isEmpty()) {
-                sb.append(" | Legs: ").append(execResult.getBridgeLegResults().size());
-            }
-        }
-        
-        sb.append(" | Temps: ").append(execResult.getExecutionTimeMs()).append("ms");
-        return sb.toString();
-    }
-
-    /**
-     * Prévisualise un transfert sans l'exécuter
-     * Utilise le SmartPaymentOrchestrator pour supporter le bridge routing
+     * Calcule la route et le prix sans rien exécuter, et émet un devis épinglé.
+     *
+     * <p>
+     * Le devis lie le prix affiché au prix qui sera débité : sans lui, la
+     * prévisualisation et l'exécution sont deux décisions indépendantes prises à
+     * deux instants différents.
      */
     public TransferPreview previewTransfer(String senderPhone, String recipientPhone, Long amount) {
-        if (useSmartOrchestrator) {
-            return previewWithSmartOrchestrator(senderPhone, recipientPhone, amount);
-        }
-        
-        // Fallback sur l'ancien système
-        RoutingDecision routing = routingService.determineRoute(senderPhone, recipientPhone, amount);
+        return previewTransfer(senderPhone, recipientPhone, amount, null);
+    }
 
-        if (!routing.isRouteFound()) {
+    public TransferPreview previewTransfer(String senderPhone, String recipientPhone, Long amount, Long userId) {
+        RoutingContext request;
+        try {
+            request = routingEngine.contextFor(senderPhone, recipientPhone, amount);
+        } catch (NoRouteAvailableException e) {
+            return TransferPreview.builder().available(false).reason(e.getMessage()).build();
+        }
+
+        RoutingDecision decision = routingEngine.decide(request);
+
+        if (!decision.isExecutable()) {
             return TransferPreview.builder()
                     .available(false)
-                    .reason(routing.getRoutingReason())
+                    .reason(decision.explain())
+                    .rejectionReasons(decision.rejected().stream()
+                            .map(Eligibility.Rejection::describe)
+                            .toList())
+                    .sourceCountry(request.sourceCountry().getDisplayName())
+                    .destCountry(request.destCountry().getDisplayName())
                     .build();
         }
 
-        FeeBreakdown fees = routing.getFees();
+        ScoredRoute best = decision.selected().orElseThrow();
+        FeeBreakdown fees = best.fees();
+        Optional<RouteQuote> quote = quoteService.issue(decision, request, userId);
 
         return TransferPreview.builder()
                 .available(true)
                 .amount(amount)
                 .fee(fees.getTotalFee())
-                .totalAmount(amount + fees.getTotalFee())
+                .totalAmount(best.totalCharged())
                 .displayFeePercent(fees.getDisplayPercent())
                 .gatewayFee(fees.getGatewayFee())
                 .appFee(fees.getAppFee())
-                .gateway(routing.getCollectionGateway().getDisplayName())
-                .sourceCountry(routing.getSourceCountry().getDisplayName())
-                .destCountry(routing.getDestCountry().getDisplayName())
-                .useStock(routing.isUseStock())
-                .build();
-    }
-
-    /**
-     * Preview avec le SmartPaymentOrchestrator (supporte bridge routing)
-     */
-    private TransferPreview previewWithSmartOrchestrator(String senderPhone, String recipientPhone, Long amount) {
-        OrchestrationRequest orchRequest = OrchestrationRequest.builder()
-                .senderPhone(senderPhone)
-                .recipientPhone(recipientPhone)
-                .amount(amount)
-                .currency("XOF")
-                .build();
-
-        OrchestrationResult orchestration = orchestrator.orchestrate(orchRequest);
-
-        if (!orchestration.isSuccess()) {
-            return TransferPreview.builder()
-                    .available(false)
-                    .reason(orchestration.getErrorMessage())
-                    .build();
-        }
-
-        FeeBreakdown fees = orchestration.getFees();
-        RoutingStrategy strategy = orchestration.getStrategy();
-
-        TransferPreview.TransferPreviewBuilder builder = TransferPreview.builder()
-                .available(true)
-                .amount(amount)
-                .fee(fees != null ? fees.getTotalFee() : 0L)
-                .totalAmount(amount + (fees != null ? fees.getTotalFee() : 0L))
-                .displayFeePercent(fees != null ? fees.getDisplayPercent() : 0)
-                .gatewayFee(fees != null ? fees.getGatewayFee() : 0L)
-                .appFee(fees != null ? fees.getAppFee() : 0L)
-                .sourceCountry(orchestration.getSourceCountry().getDisplayName())
-                .destCountry(orchestration.getDestCountry().getDisplayName())
-                .routingStrategy(strategy.getType().name())
-                .routingScore(strategy.getPrimaryScore())
-                .useStock(strategy.isUseStock());
-
-        // Infos gateway selon le type de stratégie
-        if (orchestration.isBridgePayment() && orchestration.getBridgeRoute() != null) {
-            // Bridge routing
-            var bridgeRoute = orchestration.getBridgeRoute();
-            builder.gateway("Bridge via " + bridgeRoute.getBridgeCountries().stream()
-                    .map(Country::getIsoCode)
-                    .collect(java.util.stream.Collectors.joining(" → ")))
-                    .isBridgePayment(true)
-                    .bridgeRouteDescription(bridgeRoute.getRouteDescription())
-                    .bridgeCountries(bridgeRoute.getBridgeCountries().stream()
-                            .map(Country::getIsoCode)
-                            .collect(java.util.stream.Collectors.toList()))
-                    .bridgeHopCount(bridgeRoute.getHopCount())
-                    .bridgeTotalFeePercent(bridgeRoute.getTotalFeePercent())
-                    .bridgeLegs(bridgeRoute.getLegs().stream()
-                            .map(leg -> BridgeLegPreview.builder()
-                                    .from(leg.getFrom().getIsoCode())
-                                    .to(leg.getTo().getIsoCode())
-                                    .gateway(leg.getGateway().getDisplayName())
-                                    .feePercent(leg.getFeePercent())
-                                    .build())
-                            .collect(java.util.stream.Collectors.toList()));
-        } else {
-            // Route directe
-            builder.gateway(strategy.getPrimaryGateway() != null 
-                    ? strategy.getPrimaryGateway().getDisplayName() 
-                    : "N/A");
-            
-            // Fallback gateways
-            if (strategy.getOrderedGateways() != null && strategy.getOrderedGateways().size() > 1) {
-                builder.fallbackGateways(strategy.getOrderedGateways().stream()
+                .gateway(best.gateway().getDisplayName())
+                .sourceCountry(request.sourceCountry().getDisplayName())
+                .destCountry(request.destCountry().getDisplayName())
+                .sourceCurrency(best.sourceCurrency())
+                .payoutAmount(best.payoutAmount())
+                .payoutCurrency(best.payoutCurrency())
+                .routingScore(best.totalScore())
+                .routingStrategy(decision.outcome().name())
+                .fallbackGateways(decision.fallbackOrder().stream()
                         .skip(1)
-                        .map(GatewayType::getDisplayName)
-                        .collect(java.util.stream.Collectors.toList()));
-            }
-        }
-
-        return builder.build();
-    }
-
-    /**
-     * Valider les limites de transaction (utilise le service de limites dédié)
-     */
-    private void validateTransactionLimits(User sender, Long amount, RoutingDecision routing) {
-        // Utiliser le service de limites pour une validation complète
-        // incluant les limites par transaction, quotidiennes, mensuelles et par corridor
-        transactionLimitsService.validateTransaction(
-                sender, 
-                amount, 
-                routing.getSourceCountry(), 
-                routing.getDestCountry()
-        );
-        
-        log.info("Transaction limits validated successfully for user={}, amount={}, corridor={}-{}", 
-                sender.getId(), amount, routing.getSourceCountry(), routing.getDestCountry());
-    }
-
-    private Transaction createTransaction(User sender, TransferRequest request,
-            RoutingDecision routing, String reference) {
-        FeeBreakdown fees = routing.getFees();
-
-        return Transaction.builder()
-                .sender(sender)
-                .senderPhone(request.getSenderPhone())
-                .senderName(sender.getFullName())
-                .recipientPhone(request.getRecipientPhone())
-                .recipientName(request.getRecipientName())
-                .amount(request.getAmount())
-                .fee(fees.getTotalFee())
-                .gatewayFee(fees.getGatewayFee())
-                .appFee(fees.getAppFee())
-                .currency("XOF")
-                .platform(routing.getCollectionGateway().getCode())
-                .status(TransactionStatus.PENDING)
-                .description(request.getDescription())
-                .externalReference(reference)
-                .sourceCountry(routing.getSourceCountry())
-                .destCountry(routing.getDestCountry())
-                .collectionGateway(routing.getCollectionGateway())
-                .payoutGateway(routing.getPayoutGateway())
-                .usedStock(routing.isUseStock())
+                        .map(g -> g.getDisplayName())
+                        .toList())
+                .quoteId(quote.map(RouteQuote::getId).orElse(null))
+                .quoteExpiresAt(quote.map(q -> q.getExpiresAt().toString()).orElse(null))
+                .reason(decision.explain())
                 .build();
     }
 
-    private PayoutResponse executePayout(RoutingDecision routing, TransferRequest request, String reference) {
-        PayoutGateway gateway = findPayoutGateway(routing.getPayoutGateway());
+    // ==================================================================
+    // Exécution
+    // ==================================================================
 
-        Optional<Country> destCountry = Country.fromPhoneNumber(request.getRecipientPhone());
-        Optional<MobileOperator> operator = destCountry.flatMap(
-                c -> MobileOperator.fromPhoneNumber(request.getRecipientPhone(), c));
+    public TransferResult executeTransfer(Long userId, TransferRequest request) {
+        User sender = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur non trouvé"));
 
+        // Le numéro de l'expéditeur vient du compte authentifié, jamais du corps de
+        // la requête : il détermine le pays source, donc le corridor, le barème et
+        // la piste d'audit.
+        String senderPhone = sender.getPhoneNumber();
+        if (request.getSenderPhone() != null && !request.getSenderPhone().equals(senderPhone)) {
+            log.warn("Sender phone in payload ({}) differs from authenticated account ({}), account wins",
+                    request.getSenderPhone(), senderPhone);
+        }
+
+        RoutingContext context = routingEngine.contextFor(
+                senderPhone, request.getRecipientPhone(), request.getAmount());
+
+        // Devis : si l'appelant en présente un, il est honoré ou l'appel échoue.
+        // Pas de reroutage silencieux à un autre prix.
+        if (request.getQuoteId() != null && !request.getQuoteId().isBlank()) {
+            quoteService.consume(request.getQuoteId(), userId,
+                    request.getRecipientPhone(), request.getAmount());
+        }
+
+        RoutingDecision decision = routingEngine.decideOrThrow(context);
+
+        transactionLimitsService.validateTransaction(
+                sender, request.getAmount(), context.sourceCountry(), context.destCountry());
+
+        if (requireCollectionConfirmed) {
+            throw new BadRequestException(
+                    "Encaissement préalable requis : le flux de collecte n'est pas encore branché.");
+        }
+
+        ScoredRoute route = decision.selected().orElseThrow();
+        String reference = generateReference();
+
+        // --- Transaction courte n°1 : l'intention, committée avant tout appel ---
+        Transaction transaction = ledger.recordIntent(sender, senderPhone,
+                request.getRecipientPhone(), request.getRecipientName(),
+                request.getDescription(), context, route, reference);
+
+        // --- Hors transaction : l'appel partenaire ---
         PayoutRequest payoutRequest = PayoutRequest.builder()
                 .reference(reference)
-                .amount(request.getAmount())
-                .currency("XOF")
+                .amount(route.payoutAmount())
+                .currency(route.payoutCurrency())
                 .recipientPhone(request.getRecipientPhone())
                 .recipientName(request.getRecipientName())
-                .country(destCountry.orElse(null))
-                .operator(operator.orElse(null))
+                .country(context.destCountry())
+                .operator(context.destOperator())
                 .description(request.getDescription())
                 .build();
 
-        return gateway.initiatePayout(payoutRequest);
-    }
+        PayoutExecutor.Result execution = payoutExecutor.execute(
+                decision, payoutRequest, context.destCountry());
 
-    private PayoutGateway findPayoutGateway(GatewayType type) {
-        return payoutGateways.stream()
-                .filter(g -> g.getGatewayType() == type)
-                .findFirst()
-                .orElseThrow(() -> new BadRequestException(
-                        "Passerelle de payout non disponible: " + type));
-    }
+        // --- Transaction courte n°2 : le résultat ---
+        Transaction current = ledger.recordOutcome(transaction.getId(), execution);
 
-    private void debitStock(GatewayType gateway, Country country, Long amount) {
-        Optional<GatewayStock> stockOpt = stockRepository
-                .findByGatewayAndCountryForUpdate(gateway, country);
-
-        if (stockOpt.isPresent()) {
-            GatewayStock stock = stockOpt.get();
-            stock.debit(amount);
-            stockRepository.save(stock);
-            log.info("Stock debited: gateway={}, country={}, amount={}, newBalance={}",
-                    gateway, country, amount, stock.getBalance());
-        }
+        return TransferResult.builder()
+                .success(execution.success())
+                .transactionId(current.getId())
+                .reference(current.getExternalReference())
+                .amount(route.sourceAmount())
+                .fee(route.fees().getTotalFee())
+                .totalAmount(route.totalCharged())
+                .displayFeePercent(route.fees().getDisplayPercent())
+                .status(current.getStatus().name())
+                .routingReason(decision.explain())
+                .message(execution.success()
+                        ? "Transfert initié avec succès"
+                        : execution.errorMessage())
+                .gateway(execution.gateway() != null ? execution.gateway().getDisplayName() : null)
+                .sourceCountry(context.sourceCountry().getDisplayName())
+                .destCountry(context.destCountry().getDisplayName())
+                .payoutAmount(route.payoutAmount())
+                .payoutCurrency(route.payoutCurrency())
+                .outcomeUndetermined(execution.outcomeUndetermined())
+                .build();
     }
 
     private String generateReference() {
-        return "TRF" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        // UUID complet : l'ancienne troncature à 8 caractères hexadécimaux ne
+        // laissait que 32 bits, soit une collision sur deux vers 77 000 transferts,
+        // alors que les callbacks retrouvent la transaction par cette référence.
+        return "TRF-" + UUID.randomUUID();
     }
 
-    // --- Inner classes for request/response ---
+    // ==================================================================
+    // Types d'échange
+    // ==================================================================
 
     @lombok.Data
     @lombok.Builder
@@ -563,6 +243,8 @@ public class TransferService {
         private String destOperator;
         private Long amount;
         private String description;
+        /** Devis émis par la prévisualisation. Facultatif. */
+        private String quoteId;
     }
 
     @lombok.Data
@@ -585,6 +267,10 @@ public class TransferService {
         private String destCountry;
         private String sourceOperatorName;
         private String destOperatorName;
+        private Long payoutAmount;
+        private String payoutCurrency;
+        /** Vrai si l'appel a expiré : l'issue réelle du versement est inconnue. */
+        private boolean outcomeUndetermined;
     }
 
     @lombok.Data
@@ -604,29 +290,16 @@ public class TransferService {
         private String destCountry;
         private String sourceOperatorName;
         private String destOperatorName;
-        private boolean useStock;
         private String reason;
-        // Routing info
+        /** Motifs détaillés quand aucune route n'est disponible. */
+        private List<String> rejectionReasons;
         private String routingStrategy;
         private Integer routingScore;
         private List<String> fallbackGateways;
-        // Bridge routing info
-        private boolean isBridgePayment;
-        private String bridgeRouteDescription;
-        private List<String> bridgeCountries;
-        private Integer bridgeHopCount;
-        private java.math.BigDecimal bridgeTotalFeePercent;
-        private List<BridgeLegPreview> bridgeLegs;
-    }
-
-    @lombok.Data
-    @lombok.Builder
-    @lombok.NoArgsConstructor
-    @lombok.AllArgsConstructor
-    public static class BridgeLegPreview {
-        private String from;
-        private String to;
-        private String gateway;
-        private java.math.BigDecimal feePercent;
+        private String sourceCurrency;
+        private Long payoutAmount;
+        private String payoutCurrency;
+        private String quoteId;
+        private String quoteExpiresAt;
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * Configuration des plafonds intelligents anti-requalification
@@ -37,6 +38,17 @@ public class TransactionLimitsConfig {
      * Configuration du mode double passerelle
      */
     private DualGatewayConfig dualGateway = new DualGatewayConfig();
+
+    /**
+     * Si true, un corridor absent de la configuration est refusé au lieu de
+     * retomber sur un défaut permissif.
+     *
+     * <p>
+     * Le comportement historique — corridor inconnu, on ouvre à 100 000 FCFA —
+     * signifiait qu'une erreur de configuration ouvrait un corridor au lieu de le
+     * fermer. Sur un service qui déplace de l'argent, le défaut sûr est l'inverse.
+     */
+    private Boolean rejectUnknownCorridors = false;
 
     @Data
     public static class TransactionLimits {
@@ -206,6 +218,27 @@ public class TransactionLimitsConfig {
     /**
      * Obtenir la limite pour un corridor spécifique
      */
+    /**
+     * Recherche un corridor déclaré.
+     *
+     * <p>
+     * Les clés de configuration sont des codes ISO ({@code "SN-SN"}). L'appelant
+     * historique passait {@code Country.name()}, donc {@code "SENEGAL-SENEGAL"} :
+     * aucune clé ne correspondait jamais et tous les corridors retombaient
+     * silencieusement sur le défaut permissif, y compris ceux volontairement
+     * désactivés en configuration.
+     *
+     * @param sourceIso code ISO du pays source, ex. {@code "SN"}
+     * @param destIso   code ISO du pays de destination
+     */
+    public Optional<CorridorLimit> findCorridor(String sourceIso, String destIso) {
+        return Optional.ofNullable(corridors.get(sourceIso + "-" + destIso));
+    }
+
+    public boolean isRejectUnknownCorridors() {
+        return Boolean.TRUE.equals(rejectUnknownCorridors);
+    }
+
     public CorridorLimit getCorridorLimit(String sourceCountry, String destCountry) {
         String corridorCode = sourceCountry + "-" + destCountry;
         return corridors.getOrDefault(corridorCode, createDefaultCorridorLimit(corridorCode));

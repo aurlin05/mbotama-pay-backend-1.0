@@ -29,13 +29,28 @@ import static org.mockito.Mockito.when;
 @DisplayName("Tests des Limites de Transaction")
 class TransactionLimitsServiceTest {
 
-    @Mock
+    /**
+     * Configuration réelle, et non simulacre.
+     *
+     * <p>
+     * Ces onze tests échouaient tous : {@code thenCallRealMethod()} était appliqué
+     * à un mock dont les champs internes étaient nuls, ce qui produisait une
+     * {@code NullPointerException} au premier contrôle de montant. Le composant
+     * chargé d'appliquer les plafonds réglementaires n'avait donc aucune
+     * couverture effective.
+     *
+     * <p>
+     * Mockito signalait par ailleurs le stub {@code getCorridorLimit("SN", "SN")}
+     * comme inutilisé : le service interrogeait en réalité
+     * {@code "SENEGAL-SENEGAL"}, si bien qu'aucun corridor configuré n'était
+     * jamais trouvé en production. L'échec du test décrivait un vrai défaut, c'est
+     * le code qui a été corrigé.
+     */
     private TransactionLimitsConfig limitsConfig;
 
     @Mock
     private TransactionRepository transactionRepository;
 
-    @InjectMocks
     private TransactionLimitsService limitsService;
 
     private User testUser;
@@ -44,24 +59,32 @@ class TransactionLimitsServiceTest {
 
     @BeforeEach
     void setUp() {
+        limitsConfig = new TransactionLimitsConfig();
+
         // Configuration des limites de transaction
         transactionLimits = new TransactionLimitsConfig.TransactionLimits();
         transactionLimits.setMinimum(500L);
         transactionLimits.setMaximumStandard(100_000L);
         transactionLimits.setAbsoluteMaximum(200_000L);
+        limitsConfig.setTransaction(transactionLimits);
 
-        // Configuration du corridor SN-SN
+        // Plafonds quotidiens par niveau KYC
+        TransactionLimitsConfig.DailyLimits daily = new TransactionLimitsConfig.DailyLimits();
+        daily.setLevel0(0L);
+        daily.setLevel1(300_000L);
+        daily.setLevel2(500_000L);
+        limitsConfig.setDaily(daily);
+
+        // Configuration du corridor SN-SN, indexé par code ISO
         corridorLimit = new TransactionLimitsConfig.CorridorLimit();
         corridorLimit.setCode("SN-SN");
         corridorLimit.setDailyLimit(2_000_000L);
         corridorLimit.setMaxPerTransaction(200_000L);
         corridorLimit.setMaxTransactionsPerDay(100);
         corridorLimit.setEnabled(true);
+        limitsConfig.getCorridors().put("SN-SN", corridorLimit);
 
-        // Configuration des mocks
-        when(limitsConfig.getTransaction()).thenReturn(transactionLimits);
-        when(limitsConfig.getCorridorLimit("SN", "SN")).thenReturn(corridorLimit);
-        when(limitsConfig.isValidTransactionAmount(any())).thenCallRealMethod();
+        limitsService = new TransactionLimitsService(limitsConfig, transactionRepository);
 
         // Utilisateur de test KYC Niveau 1
         testUser = User.builder()
@@ -78,7 +101,6 @@ class TransactionLimitsServiceTest {
     void shouldRejectTransactionWhenKycIsNone() {
         // Given
         testUser.setKycLevel(KycLevel.NONE);
-        when(limitsConfig.getDailyLimitForKycLevel("NONE")).thenReturn(0L);
 
         // When & Then
         assertThatThrownBy(() -> limitsService.validateTransaction(
@@ -92,7 +114,6 @@ class TransactionLimitsServiceTest {
     void shouldRejectTransactionBelowMinimum() {
         // Given
         Long amount = 400L; // En dessous de 500 FCFA
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(300_000L);
 
         // When & Then
         assertThatThrownBy(() -> limitsService.validateTransaction(
@@ -106,7 +127,6 @@ class TransactionLimitsServiceTest {
     void shouldRejectTransactionAboveAbsoluteMaximum() {
         // Given
         Long amount = 250_000L; // Au-dessus de 200k FCFA
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(300_000L);
 
         // When & Then
         assertThatThrownBy(() -> limitsService.validateTransaction(
@@ -123,7 +143,6 @@ class TransactionLimitsServiceTest {
         Long alreadyUsed = 250_000L;
         Long newAmount = 100_000L; // 250k + 100k = 350k > 300k
 
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(dailyLimit);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(alreadyUsed);
@@ -143,7 +162,6 @@ class TransactionLimitsServiceTest {
         Long dailyLimit = 300_000L;
         Long monthlyLimit = 500_000L;
 
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(dailyLimit);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(0L); // Aucune transaction aujourd'hui
@@ -160,7 +178,6 @@ class TransactionLimitsServiceTest {
         Long alreadyUsed = 250_000L;
         Long newAmount = 50_000L; // Exactement à la limite
 
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(dailyLimit);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(alreadyUsed);
@@ -174,7 +191,6 @@ class TransactionLimitsServiceTest {
     void shouldRejectWhenCorridorDisabled() {
         // Given
         corridorLimit.setEnabled(false);
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(300_000L);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(0L);
@@ -189,9 +205,11 @@ class TransactionLimitsServiceTest {
     @Test
     @DisplayName("Devrait rejeter si montant dépasse la limite du corridor")
     void shouldRejectWhenAmountExceedsCorridorLimit() {
-        // Given
-        Long amount = 250_000L; // Dépasse la limite du corridor de 200k
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(300_000L);
+        // Given — le plafond du corridor doit être STRICTEMENT sous le maximum
+        // absolu, sinon le contrôle de montant rejette avant d'atteindre le
+        // contrôle de corridor et le test valide la mauvaise règle.
+        corridorLimit.setMaxPerTransaction(100_000L);
+        Long amount = 150_000L; // sous les 200k absolus, au-dessus des 100k du corridor
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(0L);
@@ -207,7 +225,6 @@ class TransactionLimitsServiceTest {
     @DisplayName("Devrait retourner les limites détaillées pour un utilisateur")
     void shouldReturnDetailedLimitsForUser() {
         // Given
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(300_000L);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(0L, 0L); // Pour quotidien et mensuel
@@ -232,7 +249,6 @@ class TransactionLimitsServiceTest {
         Long dailyLimit = 300_000L;
         Long used = 150_000L;
 
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_1")).thenReturn(dailyLimit);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(used, 0L);
@@ -250,7 +266,6 @@ class TransactionLimitsServiceTest {
     void shouldHaveUnlimitedMonthlyLimitForKycLevel2() {
         // Given
         testUser.setKycLevel(KycLevel.LEVEL_2);
-        when(limitsConfig.getDailyLimitForKycLevel("LEVEL_2")).thenReturn(500_000L);
         when(transactionRepository.sumAmountBySenderIdAndStatusCompletedSince(
                 eq(1L), any(LocalDateTime.class)))
                 .thenReturn(0L, 0L);

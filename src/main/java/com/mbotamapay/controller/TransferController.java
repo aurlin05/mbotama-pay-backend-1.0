@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * Controller pour les transferts d'argent avec routage intelligent
- * 
+ *
  * Endpoints:
  * - POST /transfers/preview : Prévisualise les frais et la route
  * - POST /transfers : Exécute le transfert
@@ -42,23 +42,31 @@ public class TransferController {
     private final OperatorService operatorService;
 
     /**
-     * Prévisualise un transfert sans l'exécuter
-     * Retourne les frais calculés et la route sélectionnée
+     * Prévisualise un transfert sans l'exécuter.
+     *
+     * <p>
+     * Retourne aussi un identifiant de devis : le présenter à l'exécution
+     * garantit que le prix affiché est bien celui qui sera débité.
      */
     @PostMapping("/preview")
-    @Operation(summary = "Prévisualiser un transfert", description = "Calcule les frais et détermine la route optimale sans exécuter le transfert")
+    @Operation(summary = "Prévisualiser un transfert",
+            description = "Calcule les frais et la route optimale, et émet un devis valable quelques minutes")
     public ResponseEntity<ApiResponse<TransferPreviewResponseDto>> previewTransfer(
+            @AuthenticationPrincipal User user,
             @Valid @RequestBody TransferPreviewRequestDto request) {
 
-        log.info("Transfer preview: {} ({}) -> {} ({}), amount={}",
-                request.getSenderPhone(), request.getSourceOperator(),
-                request.getRecipientPhone(), request.getDestOperator(),
-                request.getAmount());
+        // Si l'appelant est authentifié, le numéro de l'expéditeur vient du compte :
+        // c'est lui qui détermine le pays source, donc le corridor et le barème.
+        String senderPhone = user != null ? user.getPhoneNumber() : request.getSenderPhone();
+
+        log.info("Transfer preview: {} -> {} ({}), amount={}",
+                senderPhone, request.getRecipientPhone(), request.getDestOperator(), request.getAmount());
 
         TransferPreview preview = transferService.previewTransfer(
-                request.getSenderPhone(),
+                senderPhone,
                 request.getRecipientPhone(),
-                request.getAmount());
+                request.getAmount(),
+                user != null ? user.getId() : null);
 
         TransferPreviewResponseDto response = mapToPreviewResponse(preview,
                 request.getSourceOperator(), request.getDestOperator());
@@ -66,28 +74,23 @@ public class TransferController {
         if (!preview.isAvailable()) {
             return ResponseEntity.ok(ApiResponse.success("Route non disponible", response));
         }
-
         return ResponseEntity.ok(ApiResponse.success("Preview calculé", response));
     }
 
     /**
-     * Exécute un transfert complet
-     * 1. Valide l'utilisateur
-     * 2. Détermine la route optimale
-     * 3. Calcule les frais
-     * 4. Exécute le payout
+     * Exécute un transfert complet.
      */
     @PostMapping
-    @Operation(summary = "Exécuter un transfert", description = "Exécute un transfert d'argent avec routage intelligent automatique")
+    @Operation(summary = "Exécuter un transfert",
+            description = "Exécute un transfert avec routage intelligent. Fournir quoteId pour garantir le prix coté.")
     @PreAuthorize("hasAnyRole('KYC_LEVEL_1', 'KYC_LEVEL_2')")
     public ResponseEntity<ApiResponse<TransferResponseDto>> executeTransfer(
             @AuthenticationPrincipal User user,
             @Valid @RequestBody TransferRequestDto request) {
 
-        log.info("Transfer execution: userId={}, {} ({}) -> {} ({}), amount={}",
-                user.getId(), request.getSenderPhone(), request.getSourceOperator(),
-                request.getRecipientPhone(), request.getDestOperator(),
-                request.getAmount());
+        log.info("Transfer execution: userId={}, recipient={} ({}), amount={}, quote={}",
+                user.getId(), request.getRecipientPhone(), request.getDestOperator(),
+                request.getAmount(), request.getQuoteId());
 
         TransferRequest transferRequest = TransferRequest.builder()
                 .senderPhone(request.getSenderPhone())
@@ -97,6 +100,7 @@ public class TransferController {
                 .destOperator(request.getDestOperator())
                 .amount(request.getAmount())
                 .description(request.getDescription())
+                .quoteId(request.getQuoteId())
                 .build();
 
         TransferResult result = transferService.executeTransfer(user.getId(), transferRequest);
@@ -107,7 +111,6 @@ public class TransferController {
         if (!result.isSuccess()) {
             return ResponseEntity.ok(ApiResponse.error(result.getMessage()));
         }
-
         return ResponseEntity.ok(ApiResponse.success("Transfert initié avec succès", response));
     }
 
@@ -115,7 +118,7 @@ public class TransferController {
 
     private TransferPreviewResponseDto mapToPreviewResponse(TransferPreview preview,
             String sourceOperator, String destOperator) {
-        TransferPreviewResponseDto.TransferPreviewResponseDtoBuilder builder = TransferPreviewResponseDto.builder()
+        return TransferPreviewResponseDto.builder()
                 .available(preview.isAvailable())
                 .amount(preview.getAmount())
                 .fee(preview.getFee())
@@ -128,32 +131,17 @@ public class TransferController {
                 .destCountry(preview.getDestCountry())
                 .sourceOperatorName(getOperatorDisplayName(sourceOperator))
                 .destOperatorName(getOperatorDisplayName(destOperator))
-                .useStock(preview.isUseStock())
-                .reason(preview.getReason())
+                .sourceCurrency(preview.getSourceCurrency())
+                .payoutAmount(preview.getPayoutAmount())
+                .payoutCurrency(preview.getPayoutCurrency())
                 .routingStrategy(preview.getRoutingStrategy())
                 .routingScore(preview.getRoutingScore())
                 .fallbackGateways(preview.getFallbackGateways())
-                .isBridgePayment(preview.isBridgePayment());
-
-        // Bridge routing info
-        if (preview.isBridgePayment() && preview.getBridgeLegs() != null) {
-            builder.bridgeRoute(TransferPreviewResponseDto.BridgeRouteDto.builder()
-                    .routeDescription(preview.getBridgeRouteDescription())
-                    .bridgeCountries(preview.getBridgeCountries())
-                    .hopCount(preview.getBridgeHopCount() != null ? preview.getBridgeHopCount() : 0)
-                    .totalFeePercent(preview.getBridgeTotalFeePercent())
-                    .legs(preview.getBridgeLegs().stream()
-                            .map(leg -> TransferPreviewResponseDto.BridgeLegDto.builder()
-                                    .from(leg.getFrom())
-                                    .to(leg.getTo())
-                                    .gateway(leg.getGateway())
-                                    .feePercent(leg.getFeePercent())
-                                    .build())
-                            .collect(java.util.stream.Collectors.toList()))
-                    .build());
-        }
-
-        return builder.build();
+                .quoteId(preview.getQuoteId())
+                .quoteExpiresAt(preview.getQuoteExpiresAt())
+                .reason(preview.getReason())
+                .rejectionReasons(preview.getRejectionReasons())
+                .build();
     }
 
     private TransferResponseDto mapToTransferResponse(TransferResult result,
@@ -177,8 +165,9 @@ public class TransferController {
     }
 
     private String getOperatorDisplayName(String operatorCode) {
-        if (operatorCode == null)
+        if (operatorCode == null) {
             return null;
+        }
         return operatorService.getOperatorByCode(operatorCode)
                 .map(MobileOperator::getDisplayName)
                 .orElse(operatorCode);

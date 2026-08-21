@@ -17,7 +17,12 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class TransferRequestDto {
 
-    @NotBlank(message = "Le numéro de téléphone de l'expéditeur est requis")
+    /**
+     * Numéro de l'expéditeur, désormais <strong>indicatif</strong> : le serveur
+     * retient celui du compte authentifié. Il déterminait le pays source, donc le
+     * corridor, le barème et la piste d'audit ; le laisser au choix de l'appelant
+     * revenait à lui laisser choisir son corridor.
+     */
     private String senderPhone;
 
     /**
@@ -45,4 +50,14 @@ public class TransferRequestDto {
     private Long amount;
 
     private String description;
+
+    /**
+     * Devis émis par la prévisualisation.
+     *
+     * <p>
+     * Facultatif, mais recommandé : sans lui l'exécution recalcule la route à son
+     * propre instant et le prix débité peut différer du prix affiché. Fourni, il
+     * est honoré ou l'appel échoue explicitement — jamais de reroutage silencieux.
+     */
+    private String quoteId;
 }
