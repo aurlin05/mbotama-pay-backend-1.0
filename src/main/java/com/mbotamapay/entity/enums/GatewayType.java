@@ -15,7 +15,8 @@ public enum GatewayType {
     PAYTECH("paytech", "PayTech"),
     CINETPAY("cinetpay", "CinetPay"),
     PAYDUNYA("paydunya", "PayDunya"),
-    MONETBIL("monetbil", "Monetbil");
+    MONETBIL("monetbil", "Monetbil"),
+    PAWAPAY("pawapay", "pawaPay");
 
     private final String code;
     private final String displayName;

@@ -89,19 +89,17 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
     private boolean enabled;
 
     private final RestTemplate restTemplate;
-    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
-
-    private volatile GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+    private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
 
     public PayDunyaGateway(@Qualifier(GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
-            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+            com.mbotamapay.gateway.GatewayCapabilityRegistry registry) {
         this.restTemplate = restTemplate;
-        this.overrides = overrides;
+        this.registry = registry;
     }
 
     @jakarta.annotation.PostConstruct
-    void resolveCapabilities() {
-        this.capabilities = overrides.resolve(GatewayType.PAYDUNYA, DEFAULT_CAPABILITIES);
+    void registerCapabilities() {
+        registry.registerDefault(GatewayType.PAYDUNYA, DEFAULT_CAPABILITIES);
     }
 
     @Override
@@ -121,7 +119,7 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
 
     @Override
     public GatewayCapabilities capabilities() {
-        return capabilities;
+        return registry.capabilities(GatewayType.PAYDUNYA, DEFAULT_CAPABILITIES);
     }
 
     @Override

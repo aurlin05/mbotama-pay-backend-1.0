@@ -70,27 +70,25 @@ public class CinetPayGateway implements PaymentGateway, PayoutGateway {
     private boolean enabled;
 
     private final RestTemplate restTemplate;
-    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
-
-    /** Couverture effective, redéfinissable par {@code gateway.capabilities.cinetpay.*}. */
-    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+    private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
 
     public CinetPayGateway(
             @org.springframework.beans.factory.annotation.Qualifier(
                     com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
-            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+            com.mbotamapay.gateway.GatewayCapabilityRegistry registry) {
         this.restTemplate = restTemplate;
-        this.overrides = overrides;
+        this.registry = registry;
     }
 
     @jakarta.annotation.PostConstruct
-    void resolveCapabilities() {
-        this.capabilities = overrides.resolve(GatewayType.CINETPAY, DEFAULT_CAPABILITIES);
+    void registerCapabilities() {
+        registry.registerDefault(GatewayType.CINETPAY, DEFAULT_CAPABILITIES);
     }
 
+    /** Couverture effective : base, puis configuration, puis la déclaration ci-dessus. */
     @Override
     public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
-        return capabilities;
+        return registry.capabilities(GatewayType.CINETPAY, DEFAULT_CAPABILITIES);
     }
 
     @Override

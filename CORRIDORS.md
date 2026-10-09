@@ -137,35 +137,74 @@ partenaires. C'est maintenant vérifié à chaque démarrage.
 
 ## 5. Mettre à jour une couverture partenaire
 
-La couverture d'un agrégateur change quand il ouvre un marché. Elle n'est plus
-une constante compilée.
+La couverture d'un agrégateur change quand il ouvre un marché. Elle se résout
+en trois niveaux, du plus fort au plus faible :
 
-```yaml
-gateway:
-  capabilities:
-    feexpay:
-      payout-countries: BENIN,TOGO,COTE_DIVOIRE,CONGO_BRAZZAVILLE,SENEGAL
-      collection-countries: BENIN,TOGO,COTE_DIVOIRE,CONGO_BRAZZAVILLE,SENEGAL
-      currencies: XOF,XAF
-      operators: MTN_BJ,MOOV_BJ,CELTIIS_BJ,ORANGE_SN,WAVE_SN,FREE_SN
+| Niveau | Où | Quand l'utiliser |
+|---|---|---|
+| **base** | `PUT /admin/routing/coverage/{gateway}` | Le partenaire annonce une ouverture. Effet immédiat, sans redéploiement. |
+| **configuration** | `gateway.capabilities.*` | Environnement figé, déploiement piloté par variables. |
+| **code** | déclaration dans la passerelle | Point de départ, revu à chaque intégration. |
+
+Chaque champ se résout indépendamment : ne redéfinir que `payoutCountries`
+laisse opérateurs et devises au niveau inférieur.
+
+### Depuis l'administration
+
+```http
+PUT /api/v1/admin/routing/coverage/FEEXPAY
+Content-Type: application/json
+
+{
+  "payoutCountries": ["BENIN", "TOGO", "COTE_DIVOIRE", "CONGO_BRAZZAVILLE", "SENEGAL"],
+  "operators": ["MTN_BJ", "MOOV_BJ", "CELTIIS_BJ", "TOGOCOM_TG", "MOOV_TG",
+                "ORANGE_CI", "MTN_CI", "MOOV_CI", "WAVE_CI", "MTN_CG",
+                "ORANGE_SN", "WAVE_SN"],
+  "note": "ouverture Sénégal confirmée par le partenaire"
+}
 ```
 
-Chaque champ est indépendant : ne redéfinir que `payout-countries` laisse les
-opérateurs et les devises inchangés.
+La réponse porte le **contrôle de cohérence rejoué** : fermer un pays encore
+desservi par des routes actives, ou en ouvrir un sans route, se voit
+immédiatement au lieu d'attendre le prochain démarrage.
 
-**Procédure complète pour ouvrir un marché :**
+```json
+{
+  "coverage": { "source": "DATABASE", "payoutCountries": ["BENIN", "..."] },
+  "gatewayErrors": [],
+  "gatewayWarnings": ["FeeXPay SN-SN : passerelle non opérationnelle, route inerte"],
+  "totalErrors": 0,
+  "totalWarnings": 3
+}
+```
 
-1. Déclarer la couverture en configuration (ci-dessus).
+| Endpoint | Effet |
+|---|---|
+| `GET /admin/routing/coverage` | Couverture effective de toutes les passerelles, avec l'origine (`CODE`, `CONFIG`, `DATABASE`) |
+| `GET /admin/routing/coverage/{gateway}` | Idem pour une passerelle, avec la déclaration d'origine pour situer l'écart |
+| `GET /admin/routing/coverage/reference` | Valeurs acceptées — pays, devises, opérateurs par pays — pour qu'une interface n'ait pas à les recopier |
+| `PUT /admin/routing/coverage/{gateway}` | Redéfinit. Valeur inconnue refusée, pas ignorée |
+| `DELETE /admin/routing/coverage/{gateway}` | Rétablit la configuration puis le code |
+
+L'origine compte autant que la valeur : elle dit si une couverture résulte d'une
+décision d'exploitation ou d'un défaut jamais revu. C'est précisément la
+confusion qui avait laissé FeexPay annoncer six pays dans son commentaire et
+n'en déclarer que quatre dans son code.
+
+Toute modification est tracée (`ADMIN_GATEWAY_COVERAGE_UPDATED`), horodatée et
+attribuée, avec la note saisie par l'opérateur.
+
+### Procédure complète pour ouvrir un marché
+
+1. Redéfinir la couverture — administration, ou configuration si l'environnement
+   est figé.
 2. Insérer les routes correspondantes dans `gateway_routes`.
-3. Redémarrer, ou appeler `POST /admin/routing/matrix/refresh`.
-4. Vérifier `GET /admin/routing/consistency` — la réponse doit être vide
-   d'erreurs. Une route vers un pays non déclaré, une devise non gérée ou un
-   opérateur injoignable y apparaît immédiatement.
+3. Vérifier la réponse du `PUT`, ou appeler `GET /admin/routing/consistency`.
+   Une route vers un pays non déclaré, une devise non gérée ou un opérateur
+   injoignable y apparaît immédiatement.
 
 En production, positionner `routing.validation.fail-on-inconsistency=true` pour
 que le démarrage échoue plutôt que de servir un graphe incohérent.
-
----
 
 ## 6. Routage par pont
 

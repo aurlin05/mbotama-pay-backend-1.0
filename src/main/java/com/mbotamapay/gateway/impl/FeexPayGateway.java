@@ -56,36 +56,33 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
     private boolean enabled;
 
     private final RestTemplate restTemplate;
-    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
-
-    /**
-     * Couverture effective, résolue au démarrage.
-     *
-     * <p>
-     * La liste ci-dessus n'est qu'un défaut : la couverture d'un agrégateur évolue
-     * indépendamment du code. Elle se redéfinit par
-     * {@code gateway.capabilities.feexpay.payout-countries} sans redéploiement, et
-     * le contrôle de cohérence au démarrage vérifie aussitôt que la table de
-     * routes suit.
-     */
-    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+    private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
 
     public FeexPayGateway(
             @org.springframework.beans.factory.annotation.Qualifier(
                     com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
-            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+            com.mbotamapay.gateway.GatewayCapabilityRegistry registry) {
         this.restTemplate = restTemplate;
-        this.overrides = overrides;
+        this.registry = registry;
     }
 
     @jakarta.annotation.PostConstruct
-    void resolveCapabilities() {
-        this.capabilities = overrides.resolve(GatewayType.FEEXPAY, DEFAULT_CAPABILITIES);
+    void registerCapabilities() {
+        registry.registerDefault(GatewayType.FEEXPAY, DEFAULT_CAPABILITIES);
     }
 
+    /**
+     * Couverture effective, résolue à chaque appel par le registre.
+     *
+     * <p>
+     * La liste ci-dessus n'est qu'un défaut. La couverture réelle peut être
+     * redéfinie en configuration ou depuis l'administration, et la résolution est
+     * délibérément faite à l'appel : la figer au démarrage rendrait toute
+     * modification inopérante jusqu'au redéploiement suivant.
+     */
     @Override
     public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
-        return capabilities;
+        return registry.capabilities(GatewayType.FEEXPAY, DEFAULT_CAPABILITIES);
     }
 
     @Override

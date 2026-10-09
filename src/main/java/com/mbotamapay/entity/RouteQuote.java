@@ -72,9 +72,17 @@ public class RouteQuote {
     @Column(name = "gateway", nullable = false, length = 20)
     private GatewayType gateway;
 
-    /** Trace complète de la décision, en JSON, pour l'audit. */
-    @Lob
-    @Column(name = "decision_json")
+    /**
+     * Trace complète de la décision, en JSON, pour l'audit.
+     *
+     * <p>
+     * {@code text} et non {@code @Lob} : sous PostgreSQL, un {@code @Lob} sur une
+     * chaîne se traduit par un grand objet {@code oid} — stocké hors table, à
+     * purger par {@code vacuumlo}, et incompatible avec la colonne {@code TEXT}
+     * créée par la migration V17. La validation de schéma au démarrage refusait
+     * l'écart.
+     */
+    @Column(name = "decision_json", columnDefinition = "text")
     private String decisionJson;
 
     @Column(name = "created_at", nullable = false)

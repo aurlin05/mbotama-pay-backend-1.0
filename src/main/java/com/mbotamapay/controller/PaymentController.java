@@ -152,6 +152,11 @@ public class PaymentController {
             case "feexpay" -> (String) payload.get("custom_id");
             case "cinetpay" -> (String) payload.get("cpm_trans_id");
             case "paytech" -> (String) payload.get("ref_command");
+            // Seuls les callbacks de dépôt concernent l'encaissement : un callback de
+            // versement porte la même référence mais un payoutId.
+            case "pawapay" -> payload.containsKey("depositId")
+                    ? (String) payload.get("clientReferenceId")
+                    : null;
             default -> (String) payload.get("reference");
         };
     }

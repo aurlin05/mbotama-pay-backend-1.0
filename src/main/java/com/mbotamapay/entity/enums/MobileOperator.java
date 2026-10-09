@@ -20,12 +20,12 @@ public enum MobileOperator {
             Set.of("50", "51", "52", "53", "54", "56", "57", "59", "61", "62",
                     "66", "67", "69", "96", "97"),
             EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
-                    GatewayType.MONETBIL)),
+                    GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     MOOV_BJ("Moov Bénin", Country.BENIN,
             Set.of("55", "58", "60", "63", "64", "65", "68", "87", "89",
                     "92", "93", "94", "95", "98", "99"),
             EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
-                    GatewayType.MONETBIL)),
+                    GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     // 90 et 91 sont attribués à MTN dans la table Monetbil et à Celtiis ici.
     // Divergence non tranchée : les séries sont laissées à Celtiis, qui est le
     // seul des trois à être servi par une passerelle les déclarant.
@@ -36,21 +36,25 @@ public enum MobileOperator {
     // au préfixe 78 est conservé en l'état, le modifier réacheminerait du trafic réel.
     ORANGE_SN("Orange Sénégal", Country.SENEGAL, Set.of("77"),
             EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
-                    GatewayType.MONETBIL)),
+                    GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     FREE_SN("Free Sénégal", Country.SENEGAL, Set.of("76"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
     WAVE_SN("Wave Sénégal", Country.SENEGAL, Set.of("78"),
-            EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY)),
 
     // Côte d'Ivoire
     ORANGE_CI("Orange Côte d'Ivoire", Country.COTE_DIVOIRE, Set.of("07"),
-            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY)),
     MTN_CI("MTN Côte d'Ivoire", Country.COTE_DIVOIRE, Set.of("05"),
-            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY)),
     MOOV_CI("Moov Côte d'Ivoire", Country.COTE_DIVOIRE, Set.of("01"),
             EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
     WAVE_CI("Wave Côte d'Ivoire", Country.COTE_DIVOIRE, Set.of("02"),
-            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.FEEXPAY, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY)),
 
     // Togo
     TOGOCOM_TG("Togocom", Country.TOGO, Set.of("90", "91", "92", "93"),
@@ -66,27 +70,27 @@ public enum MobileOperator {
 
     // Burkina Faso
     ORANGE_BF("Orange Burkina", Country.BURKINA_FASO, Set.of("07"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
     MOOV_BF("Moov Burkina", Country.BURKINA_FASO, Set.of("06"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
 
     // Congo-Brazzaville — Monetbil ouvre un second chemin sur ce marché, qui ne
     // dépendait que d'une seule passerelle.
     MTN_CG("MTN Congo", Country.CONGO_BRAZZAVILLE, Set.of("06"),
-            EnumSet.of(GatewayType.FEEXPAY, GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.FEEXPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     AIRTEL_CG("Airtel Congo", Country.CONGO_BRAZZAVILLE, Set.of("04", "05"),
-            EnumSet.of(GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.MONETBIL, GatewayType.PAWAPAY)),
 
     // Cameroun — les séries 65x et 68x n'étaient rattachées à aucun opérateur,
     // alors qu'elles représentent l'essentiel du parc.
     ORANGE_CM("Orange Cameroun", Country.CAMEROON,
             Set.of("69", "655", "656", "657", "658", "659",
                     "685", "686", "687", "688", "689"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     MTN_CM("MTN Cameroun", Country.CAMEROON,
             Set.of("67", "650", "651", "652", "653", "654",
                     "680", "681", "682", "683", "684"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
 
     // Guinée
     ORANGE_GN("Orange Guinée", Country.GUINEA, Set.of("62", "610", "611", "612"),
@@ -102,11 +106,11 @@ public enum MobileOperator {
 
     // RD Congo
     ORANGE_CD("Orange RDC", Country.DRC, Set.of("80", "84", "85", "89"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     VODACOM_CD("Vodacom RDC", Country.DRC, Set.of("81", "82", "83"),
-            EnumSet.of(GatewayType.CINETPAY)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAWAPAY)),
     AIRTEL_CD("Airtel RDC", Country.DRC, Set.of("97", "98", "99"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     AFRICELL_CD("Africell RDC", Country.DRC, Set.of("90", "91"),
             EnumSet.of(GatewayType.MONETBIL));
 

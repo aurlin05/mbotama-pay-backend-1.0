@@ -195,6 +195,17 @@ gateway:
     service-key: ${MONETBIL_SERVICE_KEY:}
     service-secret: ${MONETBIL_SERVICE_SECRET:}
 
+  # pawaPay - https://pawapay.io (Merchant API v2)
+  # Sandbox par défaut ; production : https://api.pawapay.io
+  # Callback dépôts à déclarer dans le tableau de bord pawaPay :
+  #   <app.base-url>/api/v1/payments/callback/pawapay
+  pawapay:
+    enabled: ${PAWAPAY_ENABLED:false}
+    api-url: ${PAWAPAY_API_URL:https://api.sandbox.pawapay.io}
+    api-token: ${PAWAPAY_API_TOKEN:}
+    auth-url-poll-attempts: ${PAWAPAY_AUTH_URL_POLL_ATTEMPTS:5}
+    auth-url-poll-interval-ms: ${PAWAPAY_AUTH_URL_POLL_INTERVAL_MS:1000}
+
 # Moteur de routage
 routing:
   # Graphe de routes tenu en mémoire : la recherche de pont interrogeait la base

@@ -46,6 +46,14 @@ public enum AuditAction {
     ADMIN_KYC_MANUAL_APPROVE,
     ADMIN_TRANSACTION_REFUND,
 
+    /**
+     * Modification de la couverture déclarée d'une passerelle depuis
+     * l'administration. Ouvre ou ferme des corridors : à tracer au même titre
+     * qu'un déblocage de compte.
+     */
+    ADMIN_GATEWAY_COVERAGE_UPDATED,
+    ADMIN_GATEWAY_COVERAGE_RESET,
+
     // Security
     SUSPICIOUS_ACTIVITY_DETECTED,
     RATE_LIMIT_EXCEEDED,

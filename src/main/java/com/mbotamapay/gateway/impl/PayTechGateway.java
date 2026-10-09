@@ -62,27 +62,28 @@ public class PayTechGateway implements PaymentGateway, PayoutGateway {
     private boolean enabled;
 
     private final RestTemplate restTemplate;
-    private final com.mbotamapay.gateway.GatewayCapabilityOverrides overrides;
-
-    /** Couverture effective, redéfinissable par {@code gateway.capabilities.paytech.*}. */
-    private volatile com.mbotamapay.gateway.GatewayCapabilities capabilities = DEFAULT_CAPABILITIES;
+    private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
 
     public PayTechGateway(
             @org.springframework.beans.factory.annotation.Qualifier(
                     com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
-            com.mbotamapay.gateway.GatewayCapabilityOverrides overrides) {
+            com.mbotamapay.gateway.GatewayCapabilityRegistry registry) {
         this.restTemplate = restTemplate;
-        this.overrides = overrides;
+        this.registry = registry;
     }
 
     @jakarta.annotation.PostConstruct
-    void resolveCapabilities() {
-        this.capabilities = overrides.resolve(GatewayType.PAYTECH, DEFAULT_CAPABILITIES);
+    void registerCapabilities() {
+        registry.registerDefault(GatewayType.PAYTECH, DEFAULT_CAPABILITIES);
     }
 
+    /**
+     * Couverture effective. La Côte d'Ivoire se réouvre depuis l'administration
+     * dès que le partenaire l'aura confirmée, sans redéploiement.
+     */
     @Override
     public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
-        return capabilities;
+        return registry.capabilities(GatewayType.PAYTECH, DEFAULT_CAPABILITIES);
     }
 
     @Override
