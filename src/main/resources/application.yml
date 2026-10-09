@@ -153,17 +153,21 @@ gateway:
   # FeexPay - https://feexpay.me
   feexpay:
     enabled: ${FEEXPAY_ENABLED:true}
-    api-url: ${FEEXPAY_API_URL:https://api.feexpay.me}
+    # API v2 ; bac à sable : https://sandbox-api.feexpay.me (clés test_key_)
+    api-url: ${FEEXPAY_API_URL:https://api-v2.feexpay.me}
     api-key: ${FEEXPAY_API_KEY:}
     shop-id: ${FEEXPAY_SHOP_ID:}
 
-  # CinetPay - https://cinetpay.com
+  # CinetPay - https://cinetpay.com (API v1, 2026)
+  # Bac à sable : https://api.cinetpay.net (clés sk_test_) ; production : https://api.cinetpay.co
+  # Identifiants PAR PAYS : CI:api_key:api_password,SN:api_key:api_password
+  # Rappels à déclarer : <app.base-url>/api/v1/payments/callback/cinetpay
   cinetpay:
     enabled: ${CINETPAY_ENABLED:true}
-    api-url: ${CINETPAY_API_URL:https://api-checkout.cinetpay.com/v2}
-    transfer-url: ${CINETPAY_TRANSFER_URL:https://api.cinetpay.com/v1/transfer}
-    api-key: ${CINETPAY_API_KEY:}
-    site-id: ${CINETPAY_SITE_ID:}
+    api-url: ${CINETPAY_API_URL:https://api.cinetpay.net}
+    credentials: ${CINETPAY_CREDENTIALS:}
+    # E-mail client exigé par CinetPay à l'encaissement quand l'expéditeur n'en a pas.
+    default-client-email: ${CINETPAY_DEFAULT_CLIENT_EMAIL:}
 
   # PayTech - https://paytech.sn
   paytech:
@@ -179,8 +183,8 @@ gateway:
     api-url: ${PAYDUNYA_API_URL:https://app.paydunya.com/api/v1}
     checkout-path: ${PAYDUNYA_CHECKOUT_PATH:/checkout-invoice/create}
     checkout-status-path: ${PAYDUNYA_CHECKOUT_STATUS_PATH:/checkout-invoice/confirm}
-    disburse-invoice-path: ${PAYDUNYA_DISBURSE_INVOICE_PATH:/disburse/get-invoice}
-    disburse-submit-path: ${PAYDUNYA_DISBURSE_SUBMIT_PATH:/disburse/submit-invoice}
+    # API Disburse v2 (la v1 répond 404)
+    disburse-url: ${PAYDUNYA_DISBURSE_URL:https://app.paydunya.com/api/v2/disburse}
     master-key: ${PAYDUNYA_MASTER_KEY:}
     private-key: ${PAYDUNYA_PRIVATE_KEY:}
     token: ${PAYDUNYA_TOKEN:}
@@ -191,7 +195,7 @@ gateway:
     api-url: ${MONETBIL_API_URL:https://api.monetbil.com}
     payment-path: ${MONETBIL_PAYMENT_PATH:/payment/v1/placePayment}
     payment-status-path: ${MONETBIL_PAYMENT_STATUS_PATH:/payment/v1/checkPayment}
-    payout-path: ${MONETBIL_PAYOUT_PATH:/v1/payouts}
+    payout-path: ${MONETBIL_PAYOUT_PATH:/payment/v1/payouts/withdrawal}
     service-key: ${MONETBIL_SERVICE_KEY:}
     service-secret: ${MONETBIL_SERVICE_SECRET:}
 

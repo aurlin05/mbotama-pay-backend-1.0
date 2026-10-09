@@ -118,15 +118,14 @@ app:
 gateway:
   # FeexPay - https://feexpay.me
   feexpay:
-    api-url: ${FEEXPAY_API_URL:https://api.feexpay.me}
+    api-url: ${FEEXPAY_API_URL:https://api-v2.feexpay.me}
     api-key: ${FEEXPAY_API_KEY:}
     shop-id: ${FEEXPAY_SHOP_ID:}
   
   # CinetPay - https://cinetpay.com
   cinetpay:
-    api-url: ${CINETPAY_API_URL:https://api-checkout.cinetpay.com/v2}
-    api-key: ${CINETPAY_API_KEY:}
-    site-id: ${CINETPAY_SITE_ID:}
+    api-url: ${CINETPAY_API_URL:https://api.cinetpay.net}
+    credentials: ${CINETPAY_CREDENTIALS:}
   
   # PayTech - https://paytech.sn
   paytech:

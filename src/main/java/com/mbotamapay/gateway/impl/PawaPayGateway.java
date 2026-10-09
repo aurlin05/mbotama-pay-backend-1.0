@@ -405,20 +405,9 @@ public class PawaPayGateway implements PaymentGateway, PayoutGateway {
                         "provider", provider));
     }
 
-    /**
-     * Format MSISDN attendu par pawaPay : chiffres seuls, indicatif pays inclus,
-     * sans « + » ni « 00 ». Le zéro initial du numéro local est conservé : il fait
-     * partie du numéro en Côte d'Ivoire, au Bénin et au Congo.
-     */
+    /** Format MSISDN attendu par pawaPay : voir {@link Msisdn}. */
     static String msisdn(String phone, Country country) {
-        String cleaned = phone == null ? "" : phone.replaceAll("[^0-9]", "");
-        if (cleaned.startsWith("00")) {
-            cleaned = cleaned.substring(2);
-        }
-        if (country != null && !cleaned.startsWith(country.getPhonePrefix())) {
-            cleaned = country.getPhonePrefix() + cleaned;
-        }
-        return cleaned;
+        return Msisdn.of(phone, country);
     }
 
     /**

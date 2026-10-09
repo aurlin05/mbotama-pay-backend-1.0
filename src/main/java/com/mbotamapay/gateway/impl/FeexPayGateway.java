@@ -1,25 +1,49 @@
 package com.mbotamapay.gateway.impl;
 
+import com.mbotamapay.config.GatewayHttpConfig;
+import com.mbotamapay.dto.verification.MobileMoneyVerificationResult;
 import com.mbotamapay.entity.enums.Country;
 import com.mbotamapay.entity.enums.GatewayType;
 import com.mbotamapay.entity.enums.MobileOperator;
+import com.mbotamapay.gateway.GatewayCapabilities;
+import com.mbotamapay.gateway.GatewayCapabilityRegistry;
 import com.mbotamapay.gateway.PaymentGateway;
 import com.mbotamapay.gateway.PayoutGateway;
 import com.mbotamapay.gateway.dto.*;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
 
 /**
- * FeexPay Payment Gateway Integration
- * Documentation: https://docs.feexpay.me
- * 
- * Supports: Benin, Togo, Côte d'Ivoire, Sénégal, Congo-Brazzaville, Burkina
- * Faso
+ * Intégration FeexPay — API v2 ({@code https://api-v2.feexpay.me}).
+ *
+ * <p>
+ * La documentation officielle bascule par défaut sur la v2 et indique que les
+ * versions antérieures ne fonctionnent plus. Changements pris en compte :
+ * <ul>
+ * <li>versements Bénin MTN/Moov regroupés sous {@code /transfer/global} et Togo
+ * sous {@code /togo}, avec un champ {@code network} ;</li>
+ * <li>Sénégal et Burkina Faso désormais couverts ;</li>
+ * <li>identifiant de boutique public ({@code shop}) et non plus hexadécimal ;</li>
+ * <li>pas de champ devise : elle découle de l'opérateur (XAF au Congo, XOF
+ * ailleurs).</li>
+ * </ul>
+ *
+ * <p>
+ * Notre référence de transaction voyage dans {@code callback_info}, que FeexPay
+ * renvoie dans ses webhooks et permet de rechercher.
+ *
+ * <p>
+ * Non pris en charge : Orange Burkina et Wave Burkina en versement, Orange
+ * Sénégal et Orange Burkina en encaissement — ils exigent un code OTP saisi par
+ * le client, que notre parcours ne recueille pas.
  */
 @Component
 @Slf4j
@@ -27,23 +51,59 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
 
     private static final String PLATFORM_NAME = "feexpay";
 
-    private static final com.mbotamapay.gateway.GatewayCapabilities DEFAULT_CAPABILITIES =
-            new com.mbotamapay.gateway.GatewayCapabilities(
-                    GatewayType.FEEXPAY,
-                    EnumSet.of(Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
-                            Country.CONGO_BRAZZAVILLE),
-                    EnumSet.of(Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE,
-                            Country.CONGO_BRAZZAVILLE),
-                    Set.of("XOF", "XAF"),
-                    EnumSet.of(
-                            MobileOperator.MTN_BJ, MobileOperator.MOOV_BJ, MobileOperator.CELTIIS_BJ,
-                            MobileOperator.TOGOCOM_TG, MobileOperator.MOOV_TG,
-                            MobileOperator.ORANGE_CI, MobileOperator.MTN_CI,
-                            MobileOperator.MOOV_CI, MobileOperator.WAVE_CI,
-                            MobileOperator.MTN_CG),
-                    true);
+    private static final String PAYOUT = "/api/payouts/public/";
+    private static final String PAYIN = "/api/transactions/public/requesttopay/";
 
-    @Value("${gateway.feexpay.api-url:https://api.feexpay.me}")
+    /** Chemin de versement et valeur {@code network} éventuelle, par opérateur. */
+    private static final Map<MobileOperator, Route> PAYOUT_ROUTES = new EnumMap<>(Map.ofEntries(
+            Map.entry(MobileOperator.MTN_BJ, new Route("transfer/global", "MTN")),
+            Map.entry(MobileOperator.MOOV_BJ, new Route("transfer/global", "MOOV")),
+            Map.entry(MobileOperator.CELTIIS_BJ, new Route("celtiis_bj", "CELTIIS BJ")),
+            Map.entry(MobileOperator.TOGOCOM_TG, new Route("togo", "TOGOCOM TG")),
+            Map.entry(MobileOperator.MOOV_TG, new Route("togo", "MOOV TG")),
+            Map.entry(MobileOperator.MTN_CI, new Route("mtn_ci", null)),
+            Map.entry(MobileOperator.ORANGE_CI, new Route("orange_ci", null)),
+            Map.entry(MobileOperator.MOOV_CI, new Route("moov_ci", null)),
+            Map.entry(MobileOperator.WAVE_CI, new Route("wave_ci", null)),
+            Map.entry(MobileOperator.ORANGE_SN, new Route("orange_sn", null)),
+            Map.entry(MobileOperator.FREE_SN, new Route("free_sn", null)),
+            Map.entry(MobileOperator.WAVE_SN, new Route("wave_sn", null)),
+            Map.entry(MobileOperator.MTN_CG, new Route("mtn_cg", null)),
+            Map.entry(MobileOperator.MOOV_BF, new Route("moov_bf", null))));
+
+    /** Chemin d'encaissement par opérateur (hors opérateurs exigeant un OTP). */
+    private static final Map<MobileOperator, String> PAYIN_PATHS = new EnumMap<>(Map.ofEntries(
+            Map.entry(MobileOperator.MTN_BJ, "mtn"),
+            Map.entry(MobileOperator.MOOV_BJ, "moov"),
+            Map.entry(MobileOperator.CELTIIS_BJ, "celtiis_bj"),
+            Map.entry(MobileOperator.TOGOCOM_TG, "togocom_tg"),
+            Map.entry(MobileOperator.MOOV_TG, "moov_tg"),
+            Map.entry(MobileOperator.MTN_CI, "mtn_ci"),
+            Map.entry(MobileOperator.ORANGE_CI, "orange_ci"),
+            Map.entry(MobileOperator.MOOV_CI, "moov_ci"),
+            Map.entry(MobileOperator.WAVE_CI, "wave_ci"),
+            Map.entry(MobileOperator.WAVE_SN, "wave_sn"),
+            Map.entry(MobileOperator.FREE_SN, "free_sn"),
+            Map.entry(MobileOperator.MTN_CG, "mtn_cg"),
+            Map.entry(MobileOperator.MOOV_BF, "moov_bf")));
+
+    /** Encaissements qui redirigent le client et attendent une URL de retour. */
+    private static final Set<String> PAYIN_WITH_RETURN_URL = Set.of(
+            "moov_ci", "orange_ci", "wave_ci", "wave_sn", "free_sn");
+
+    private static final Set<Country> COVERAGE = EnumSet.of(
+            Country.BENIN, Country.TOGO, Country.COTE_DIVOIRE, Country.CONGO_BRAZZAVILLE,
+            Country.SENEGAL, Country.BURKINA_FASO);
+
+    private static final GatewayCapabilities DEFAULT_CAPABILITIES = new GatewayCapabilities(
+            GatewayType.FEEXPAY,
+            COVERAGE,
+            COVERAGE,
+            Set.of("XOF", "XAF"),
+            EnumSet.copyOf(PAYOUT_ROUTES.keySet()),
+            true);
+
+    @Value("${gateway.feexpay.api-url:https://api-v2.feexpay.me}")
     private String apiUrl;
 
     @Value("${gateway.feexpay.api-key:}")
@@ -56,12 +116,10 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
     private boolean enabled;
 
     private final RestTemplate restTemplate;
-    private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
+    private final GatewayCapabilityRegistry registry;
 
-    public FeexPayGateway(
-            @org.springframework.beans.factory.annotation.Qualifier(
-                    com.mbotamapay.config.GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
-            com.mbotamapay.gateway.GatewayCapabilityRegistry registry) {
+    public FeexPayGateway(@Qualifier(GatewayHttpConfig.GATEWAY_REST_TEMPLATE) RestTemplate restTemplate,
+            GatewayCapabilityRegistry registry) {
         this.restTemplate = restTemplate;
         this.registry = registry;
     }
@@ -81,7 +139,7 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
      * modification inopérante jusqu'au redéploiement suivant.
      */
     @Override
-    public com.mbotamapay.gateway.GatewayCapabilities capabilities() {
+    public GatewayCapabilities capabilities() {
         return registry.capabilities(GatewayType.FEEXPAY, DEFAULT_CAPABILITIES);
     }
 
@@ -105,263 +163,188 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
         return GatewayType.FEEXPAY;
     }
 
+    // === Encaissement ===
+
     @Override
     public PaymentInitResponse initiatePayment(PaymentInitRequest request) {
-        log.info("Initiating FeeXPay payment: ref={}, amount={}",
+        log.info("Initiating FeexPay payin: ref={}, amount={}",
                 request.getTransactionReference(), request.getAmount());
 
-        try {
-            HttpHeaders headers = createHeaders();
+        Optional<Country> country = Country.fromPhoneNumber(request.getSenderPhone());
+        String path = country
+                .flatMap(c -> MobileOperator.fromPhoneNumber(request.getSenderPhone(), c))
+                .map(PAYIN_PATHS::get)
+                .orElse(null);
+        if (path == null) {
+            return PaymentInitResponse.builder().success(false)
+                    .message("Opérateur de l'expéditeur non pris en charge par FeexPay").build();
+        }
 
-            Map<String, Object> body = new HashMap<>();
-            body.put("shop_id", shopId);
-            body.put("amount", request.getAmount());
-            body.put("currency", request.getCurrency());
-            body.put("custom_id", request.getTransactionReference());
-            body.put("callback_url", request.getCallbackUrl());
+        String[] names = splitName(request.getSenderName());
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("phoneNumber", Msisdn.of(request.getSenderPhone(), country.get()));
+        body.put("amount", request.getAmount());
+        body.put("shop", shopId);
+        body.put("first_name", names[0]);
+        body.put("last_name", names[1]);
+        body.put("description", plainText(request.getDescription(), "Paiement MbotamaPay", 40));
+        body.put("callback_info", request.getTransactionReference());
+        if (PAYIN_WITH_RETURN_URL.contains(path)) {
             body.put("return_url", request.getReturnUrl());
+        }
+        if ("wave_ci".equals(path)) {
             body.put("cancel_url", request.getCancelUrl());
-            body.put("customer_phone", request.getSenderPhone());
-            body.put("description", request.getDescription());
-
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    apiUrl + "/api/transactions/public/invoice",
-                    HttpMethod.POST,
-                    entity,
-                    Map.class);
-
-            Map<String, Object> responseBody = response.getBody();
-
-            if (responseBody != null && "success".equals(responseBody.get("status"))) {
-                return PaymentInitResponse.builder()
-                        .success(true)
-                        .paymentUrl((String) responseBody.get("payment_url"))
-                        .externalReference((String) responseBody.get("reference"))
-                        .build();
-            } else {
-                return PaymentInitResponse.builder()
-                        .success(false)
-                        .message("FeeXPay payment initiation failed")
-                        .build();
-            }
-        } catch (Exception e) {
-            log.error("FeeXPay payment initiation error", e);
-            return PaymentInitResponse.builder()
-                    .success(false)
-                    .message(e.getMessage())
-                    .build();
         }
-    }
-
-    @Override
-    public PayoutResponse initiatePayout(PayoutRequest request) {
-        log.info("Initiating FeeXPay payout: ref={}, amount={}, country={}",
-                request.getReference(), request.getAmount(), request.getCountry());
 
         try {
-            HttpHeaders headers = createHeaders();
-            String endpoint = getPayoutEndpoint(request.getCountry(), request.getOperator());
-
-            Map<String, Object> body = new HashMap<>();
-            body.put("phone", normalizePhone(request.getRecipientPhone(), request.getCountry()));
-            body.put("amount", request.getAmount());
-            body.put("full_name", request.getRecipientName());
-            body.put("shop_id", shopId);
-            body.put("custom_id", request.getReference());
-            body.put("description", request.getDescription());
-
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
-
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    apiUrl + endpoint,
-                    HttpMethod.POST,
-                    entity,
-                    Map.class);
-
-            Map<String, Object> responseBody = response.getBody();
-
-            if (responseBody != null && "success".equals(responseBody.get("status"))) {
-                return PayoutResponse.builder()
+            Map<String, Object> response = post(PAYIN + path, body);
+            String reference = asString(response.get("reference"));
+            if (reference != null && !"FAILED".equals(asString(response.get("status")))) {
+                return PaymentInitResponse.builder()
                         .success(true)
-                        .message("Payout initiated successfully")
-                        .externalReference((String) responseBody.get("reference"))
-                        .transactionReference(request.getReference())
-                        .status("PENDING")
-                        .build();
-            } else {
-                String errorMsg = responseBody != null ? (String) responseBody.get("message") : "Payout failed";
-                return PayoutResponse.builder()
-                        .success(false)
-                        .message(errorMsg)
-                        .transactionReference(request.getReference())
-                        .status("FAILED")
-                        .build();
-            }
-        } catch (Exception e) {
-            log.error("FeeXPay payout error", e);
-            return PayoutResponse.builder()
-                    .success(false)
-                    .message(e.getMessage())
-                    .transactionReference(request.getReference())
-                    .status("FAILED")
-                    .build();
-        }
-    }
-
-    @Override
-    public PayoutStatusResponse checkPayoutStatus(String reference) {
-        log.info("Checking FeeXPay payout status: ref={}", reference);
-
-        try {
-            HttpHeaders headers = createHeaders();
-            HttpEntity<Void> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    apiUrl + "/api/transactions/public/" + reference,
-                    HttpMethod.GET,
-                    entity,
-                    Map.class);
-
-            Map<String, Object> responseBody = response.getBody();
-
-            if (responseBody != null) {
-                return PayoutStatusResponse.builder()
-                        .success(true)
-                        .status(mapStatus((String) responseBody.get("status")))
+                        .paymentUrl(asString(response.get("payment_url")))
                         .externalReference(reference)
-                        .amount(((Number) responseBody.get("amount")).longValue())
+                        .transactionId(reference)
                         .build();
             }
-
-            return PayoutStatusResponse.builder()
-                    .success(false)
-                    .message("Payout not found")
-                    .build();
+            return PaymentInitResponse.builder().success(false)
+                    .message(describe(response, "Encaissement refusé par FeexPay")).build();
         } catch (Exception e) {
-            log.error("FeeXPay payout status check error", e);
-            return PayoutStatusResponse.builder()
-                    .success(false)
-                    .message(e.getMessage())
-                    .build();
+            log.error("FeexPay payin error: {}", e.getMessage());
+            return PaymentInitResponse.builder().success(false).message(e.getMessage()).build();
         }
     }
 
+    /**
+     * Statut d'un encaissement à partir de <em>notre</em> référence, transmise dans
+     * {@code callback_info} à l'initiation : c'est elle que le contrôleur de rappel
+     * connaît.
+     */
     @Override
     public PaymentStatusResponse checkStatus(String transactionReference) {
-        log.info("Checking FeeXPay transaction status: ref={}", transactionReference);
-
         try {
-            HttpHeaders headers = createHeaders();
-            HttpEntity<Void> entity = new HttpEntity<>(headers);
-
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    apiUrl + "/api/transactions/public/" + transactionReference,
-                    HttpMethod.GET,
-                    entity,
-                    Map.class);
-
-            Map<String, Object> responseBody = response.getBody();
-
-            if (responseBody != null) {
-                String status = mapStatus((String) responseBody.get("status"));
-                return PaymentStatusResponse.builder()
-                        .success(true)
-                        .status(status)
-                        .message((String) responseBody.get("message"))
-                        .build();
-            }
-
+            Map<String, Object> response = get(
+                    "/api/transactions/public/single/status/" + transactionReference + "?by=callback_info");
             return PaymentStatusResponse.builder()
-                    .success(false)
-                    .status("UNKNOWN")
-                    .message("Transaction not found")
+                    .success(response.get("status") != null)
+                    .status(mapStatus(asString(response.get("status"))))
+                    .message(asString(response.get("reason")))
+                    .externalReference(asString(response.get("reference")))
+                    .amount(asLong(response.get("amount")))
                     .build();
         } catch (Exception e) {
-            log.error("FeeXPay status check error: ref={}", transactionReference, e);
-            return PaymentStatusResponse.builder()
-                    .success(false)
-                    .status("ERROR")
-                    .message(e.getMessage())
-                    .build();
+            log.error("FeexPay status error: ref={}: {}", transactionReference, e.getMessage());
+            return PaymentStatusResponse.builder().success(false).status("ERROR")
+                    .message(e.getMessage()).build();
         }
     }
 
+    /**
+     * FeexPay ne signe pas ses webhooks. Le contrôleur relit le statut auprès de
+     * l'API avant toute mise à jour, comme la documentation le demande : un appel
+     * forgé ne peut que déclencher une relecture.
+     */
     @Override
     public boolean verifyWebhookSignature(String payload, String signature) {
-        // TODO: Implement FeeXPay webhook signature verification
         return true;
     }
 
-    private HttpHeaders createHeaders() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("Authorization", "Bearer " + apiKey);
-        return headers;
+    // === Versement ===
+
+    @Override
+    public PayoutResponse initiatePayout(PayoutRequest request) {
+        log.info("Initiating FeexPay payout: ref={}, amount={}, country={}",
+                request.getReference(), request.getAmount(), request.getCountry());
+
+        MobileOperator operator = request.getOperator() != null
+                ? request.getOperator()
+                : MobileOperator.fromPhoneNumber(request.getRecipientPhone(), request.getCountry()).orElse(null);
+        Route route = operator == null ? null : PAYOUT_ROUTES.get(operator);
+        if (route == null) {
+            return failedPayout(request, "Opérateur du bénéficiaire non pris en charge par FeexPay");
+        }
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("amount", request.getAmount());
+        body.put("phoneNumber", Msisdn.of(request.getRecipientPhone(), request.getCountry()));
+        body.put("shop", shopId);
+        if (route.network() != null) {
+            body.put("network", route.network());
+        }
+        body.put("motif", plainText(request.getDescription(), "Transfert MbotamaPay", 30));
+        body.put("callback_info", request.getReference());
+
+        // Pas de try/catch générique : une expiration de délai doit remonter au
+        // PayoutExecutor, qui la traite comme une issue indéterminée. FeexPay ne
+        // dédoublonne pas les versements : un réessai ailleurs paierait deux fois.
+        Map<String, Object> response;
+        try {
+            response = post(PAYOUT + route.path(), body);
+        } catch (HttpStatusCodeException e) {
+            if (e.getStatusCode().is5xxServerError()) {
+                // Une 5xx ne dit pas si le versement est parti : issue indéterminée.
+                throw new ResourceAccessException("FeexPay : issue du versement indéterminée après erreur "
+                        + e.getStatusCode().value());
+            }
+            log.error("FeexPay payout rejected: {} {}", e.getStatusCode(), e.getResponseBodyAsString());
+            return failedPayout(request, "FeexPay a rejeté la requête (" + e.getStatusCode().value() + ")");
+        }
+
+        String reference = asString(response.get("reference"));
+        String status = asString(response.get("status"));
+        if (reference != null && !"FAILED".equals(status)) {
+            return PayoutResponse.builder()
+                    .success(true)
+                    .message("Payout initiated successfully")
+                    .externalReference(reference)
+                    .transactionReference(request.getReference())
+                    .status("SUCCESSFUL".equals(status) ? "COMPLETED" : "PENDING")
+                    .build();
+        }
+        return failedPayout(request, describe(response, "Versement refusé par FeexPay"));
     }
 
-    private String getPayoutEndpoint(Country country, MobileOperator operator) {
-        return switch (country) {
-            case BENIN -> {
-                if (operator == MobileOperator.MTN_BJ) yield "/api/payouts/public/mtn_bj";
-                if (operator == MobileOperator.CELTIIS_BJ) yield "/api/payouts/public/celtiis_bj";
-                yield "/api/payouts/public/moov_bj";
-            }
-            case COTE_DIVOIRE -> {
-                if (operator == MobileOperator.ORANGE_CI)
-                    yield "/api/payouts/public/orange_ci";
-                if (operator == MobileOperator.MTN_CI)
-                    yield "/api/payouts/public/mtn_ci";
-                if (operator == MobileOperator.WAVE_CI)
-                    yield "/api/payouts/public/wave_ci";
-                yield "/api/payouts/public/moov_ci";
-            }
-            case TOGO -> operator == MobileOperator.MOOV_TG ? "/api/payouts/public/moov_tg" : "/api/payouts/public/togocom_tg";
-            case CONGO_BRAZZAVILLE -> "/api/payouts/public/mtn_cg";
-            default -> "/api/payouts/public/default";
-        };
-    }
-
-    private String normalizePhone(String phone, Country country) {
-        String cleaned = phone.replaceAll("[\\s\\-+]", "");
-        if (cleaned.startsWith("00")) {
-            cleaned = cleaned.substring(2);
+    /**
+     * Statut d'un versement par la référence <strong>FeexPay</strong> (celle
+     * renvoyée à l'initiation). FeexPay rend cette vérification obligatoire avant
+     * de considérer un versement comme final.
+     */
+    @Override
+    public PayoutStatusResponse checkPayoutStatus(String reference) {
+        try {
+            Map<String, Object> response = get("/api/payouts/status/public/" + reference);
+            return PayoutStatusResponse.builder()
+                    .success(response.get("status") != null)
+                    .status(mapStatus(asString(response.get("status"))))
+                    .message(asString(response.get("reason")))
+                    .externalReference(reference)
+                    .amount(asLong(response.get("amount")))
+                    .build();
+        } catch (Exception e) {
+            log.error("FeexPay payout status error: {}", e.getMessage());
+            return PayoutStatusResponse.builder().success(false).message(e.getMessage()).build();
         }
-        if (cleaned.startsWith(country.getPhonePrefix())) {
-            cleaned = cleaned.substring(country.getPhonePrefix().length());
-        }
-        return cleaned;
     }
 
     @Override
-    public com.mbotamapay.dto.verification.MobileMoneyVerificationResult verifySubscriber(
+    public MobileMoneyVerificationResult verifySubscriber(
             String phoneNumber, Country country, MobileOperator operator) {
         log.info("FeeXPay subscriber verification: phone={}, country={}", phoneNumber, country);
 
         try {
-            HttpHeaders headers = createHeaders();
-
             Map<String, Object> body = new HashMap<>();
-            body.put("phone", normalizePhone(phoneNumber, country));
+            body.put("phone", Msisdn.of(phoneNumber, country));
             body.put("shop_id", shopId);
 
-            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+            Map<String, Object> responseBody = post("/api/check-subscriber", body);
 
-            ResponseEntity<Map> response = restTemplate.exchange(
-                    apiUrl + "/api/check-subscriber",
-                    HttpMethod.POST,
-                    entity,
-                    Map.class);
-
-            Map<String, Object> responseBody = response.getBody();
-
-            if (responseBody != null && "success".equals(responseBody.get("status"))) {
+            if ("success".equals(responseBody.get("status"))) {
+                @SuppressWarnings("unchecked")
                 Map<String, Object> data = (Map<String, Object>) responseBody.get("data");
                 boolean isActive = data != null && Boolean.TRUE.equals(data.get("is_active"));
                 String accountName = data != null ? (String) data.get("name") : null;
 
-                return com.mbotamapay.dto.verification.MobileMoneyVerificationResult.builder()
+                return MobileMoneyVerificationResult.builder()
                         .valid(isActive)
                         .apiVerified(true)
                         .accountName(accountName)
@@ -369,7 +352,7 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
                         .build();
             }
 
-            return com.mbotamapay.dto.verification.MobileMoneyVerificationResult.builder()
+            return MobileMoneyVerificationResult.builder()
                     .valid(false)
                     .apiVerified(true)
                     .errorMessage("Compte Mobile Money non trouvé")
@@ -381,15 +364,104 @@ public class FeexPayGateway implements PaymentGateway, PayoutGateway {
         }
     }
 
-    private String mapStatus(String feexpayStatus) {
-        if (feexpayStatus == null)
+    // === Internes ===
+
+    private Map<String, Object> post(String path, Map<String, Object> body) {
+        ResponseEntity<Map> response = restTemplate.exchange(
+                apiUrl + path, HttpMethod.POST, new HttpEntity<>(body, headers()), Map.class);
+        return bodyOf(response.getBody());
+    }
+
+    private Map<String, Object> get(String path) {
+        ResponseEntity<Map> response = restTemplate.exchange(
+                apiUrl + path, HttpMethod.GET, new HttpEntity<>(headers()), Map.class);
+        return bodyOf(response.getBody());
+    }
+
+    private HttpHeaders headers() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.setBearerAuth(apiKey);
+        return headers;
+    }
+
+    private static String mapStatus(String status) {
+        if (status == null) {
             return "UNKNOWN";
-        return switch (feexpayStatus.toLowerCase()) {
-            case "paid", "success", "completed" -> "COMPLETED";
-            case "pending", "processing" -> "PENDING";
-            case "failed", "error" -> "FAILED";
-            case "cancelled", "expired" -> "CANCELLED";
+        }
+        return switch (status.toUpperCase()) {
+            case "SUCCESSFUL", "SUCCESS" -> "COMPLETED";
+            case "PENDING", "IN PENDING STATE" -> "PENDING";
+            case "FAILED" -> "FAILED";
             default -> "UNKNOWN";
         };
+    }
+
+    /**
+     * {@code motif} (30 caractères) et {@code description} (40) refusent les
+     * caractères spéciaux : on ne garde que lettres non accentuées, chiffres et
+     * espaces.
+     */
+    static String plainText(String value, String fallback, int max) {
+        String source = value == null || value.isBlank() ? fallback : value;
+        String ascii = java.text.Normalizer.normalize(source, java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "")
+                .replaceAll("[^A-Za-z0-9 ]", " ")
+                .replaceAll(" +", " ")
+                .trim();
+        if (ascii.isEmpty()) {
+            ascii = fallback;
+        }
+        return ascii.length() <= max ? ascii : ascii.substring(0, max).trim();
+    }
+
+    private static String[] splitName(String fullName) {
+        String name = fullName == null ? "" : fullName.trim();
+        int space = name.indexOf(' ');
+        return space > 0
+                ? new String[] { name.substring(0, space), name.substring(space + 1).trim() }
+                : new String[] { name, "" };
+    }
+
+    private static PayoutResponse failedPayout(PayoutRequest request, String message) {
+        return PayoutResponse.builder()
+                .success(false)
+                .message(message)
+                .transactionReference(request.getReference())
+                .status("FAILED")
+                .build();
+    }
+
+    private static String describe(Map<String, Object> response, String fallback) {
+        for (String key : List.of("reason", "message", "responsemsg")) {
+            String value = asString(response.get(key));
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return fallback;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> bodyOf(Map<?, ?> body) {
+        return body == null ? Map.of() : (Map<String, Object>) body;
+    }
+
+    private static Long asLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new java.math.BigDecimal(String.valueOf(value)).longValue();
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private record Route(String path, String network) {
     }
 }

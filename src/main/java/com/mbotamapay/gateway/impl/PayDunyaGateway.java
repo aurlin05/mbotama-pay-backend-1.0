@@ -41,24 +41,45 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
 
     private static final String PLATFORM_NAME = "paydunya";
 
-    private static final Set<Country> COVERAGE = EnumSet.of(
+    /**
+     * Pays d'encaissement (checkout). Le Niger ne figure plus dans la
+     * documentation PayDunya, ni en encaissement ni en versement (vérifié en
+     * octobre 2026).
+     */
+    private static final Set<Country> COLLECTION = EnumSet.of(
             Country.SENEGAL, Country.COTE_DIVOIRE, Country.BENIN, Country.TOGO,
-            Country.BURKINA_FASO, Country.MALI, Country.NIGER);
+            Country.BURKINA_FASO, Country.MALI);
+
+    /** Versement : mêmes pays, plus le Cameroun (MTN, en XAF). */
+    private static final Set<Country> PAYOUT = EnumSet.of(
+            Country.SENEGAL, Country.COTE_DIVOIRE, Country.BENIN, Country.TOGO,
+            Country.BURKINA_FASO, Country.MALI, Country.CAMEROON);
+
+    /** Valeurs {@code withdraw_mode} de l'API Disburse v2, par opérateur. */
+    private static final Map<MobileOperator, String> WITHDRAW_MODES = new EnumMap<>(Map.ofEntries(
+            Map.entry(MobileOperator.ORANGE_SN, "orange-money-senegal"),
+            Map.entry(MobileOperator.FREE_SN, "free-money-senegal"),
+            Map.entry(MobileOperator.WAVE_SN, "wave-senegal"),
+            Map.entry(MobileOperator.ORANGE_CI, "orange-money-ci"),
+            Map.entry(MobileOperator.MTN_CI, "mtn-ci"),
+            Map.entry(MobileOperator.MOOV_CI, "moov-ci"),
+            Map.entry(MobileOperator.WAVE_CI, "wave-ci"),
+            Map.entry(MobileOperator.MTN_BJ, "mtn-benin"),
+            Map.entry(MobileOperator.MOOV_BJ, "moov-benin"),
+            Map.entry(MobileOperator.CELTIIS_BJ, "celtiis-cash"),
+            Map.entry(MobileOperator.TOGOCOM_TG, "t-money-togo"),
+            Map.entry(MobileOperator.MOOV_TG, "moov-togo"),
+            Map.entry(MobileOperator.ORANGE_BF, "orange-money-burkina"),
+            Map.entry(MobileOperator.MOOV_BF, "moov-burkina-faso"),
+            Map.entry(MobileOperator.ORANGE_ML, "orange-money-mali"),
+            Map.entry(MobileOperator.MTN_CM, "mtn-cameroun")));
 
     private static final GatewayCapabilities DEFAULT_CAPABILITIES = new GatewayCapabilities(
             GatewayType.PAYDUNYA,
-            COVERAGE,
-            COVERAGE,
-            Set.of("XOF"),
-            EnumSet.of(
-                    MobileOperator.ORANGE_SN, MobileOperator.FREE_SN, MobileOperator.WAVE_SN,
-                    MobileOperator.ORANGE_CI, MobileOperator.MTN_CI,
-                    MobileOperator.MOOV_CI, MobileOperator.WAVE_CI,
-                    MobileOperator.MTN_BJ, MobileOperator.MOOV_BJ,
-                    MobileOperator.TOGOCOM_TG, MobileOperator.MOOV_TG,
-                    MobileOperator.ORANGE_BF, MobileOperator.MOOV_BF,
-                    MobileOperator.ORANGE_ML, MobileOperator.MOOV_ML,
-                    MobileOperator.AIRTEL_NE, MobileOperator.MOOV_NE),
+            COLLECTION,
+            PAYOUT,
+            Set.of("XOF", "XAF"),
+            EnumSet.copyOf(WITHDRAW_MODES.keySet()),
             true);
 
     @Value("${gateway.paydunya.api-url:https://app.paydunya.com/api/v1}")
@@ -70,11 +91,12 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
     @Value("${gateway.paydunya.checkout-status-path:/checkout-invoice/confirm}")
     private String checkoutStatusPath;
 
-    @Value("${gateway.paydunya.disburse-invoice-path:/disburse/get-invoice}")
-    private String disburseInvoicePath;
+    /** API Disburse v2 : la v1 répond 404 depuis 2026. */
+    @Value("${gateway.paydunya.disburse-url:https://app.paydunya.com/api/v2/disburse}")
+    private String disburseUrl;
 
-    @Value("${gateway.paydunya.disburse-submit-path:/disburse/submit-invoice}")
-    private String disburseSubmitPath;
+    @Value("${app.base-url:http://localhost:8080}")
+    private String baseUrl;
 
     @Value("${gateway.paydunya.master-key:}")
     private String masterKey;
@@ -165,60 +187,67 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
     }
 
     /**
-     * Versement en deux temps, conformément au modèle « disburse » du partenaire :
-     * on obtient d'abord un jeton de décaissement, puis on le soumet.
+     * Versement en deux temps, conformément à l'API Disburse v2 : on obtient un
+     * jeton de décaissement, puis on le soumet.
      *
      * <p>
-     * Si la première étape réussit et la seconde échoue, aucun fonds n'a bougé —
-     * le jeton seul n'engage rien. C'est la raison pour laquelle le découpage est
-     * conservé tel quel plutôt que fusionné.
+     * Si la soumission n'aboutit pas clairement, la documentation impose de
+     * relire le statut du jeton : {@code created} veut dire que rien n'est parti
+     * et qu'il faut soumettre à nouveau <em>le même jeton</em> ; {@code pending}
+     * ou {@code success} veulent dire que les fonds sont engagés.
+     *
+     * <p>
+     * Pas de try/catch générique : une expiration de délai doit remonter au
+     * PayoutExecutor, qui la traite comme une issue indéterminée.
      */
     @Override
     public PayoutResponse initiatePayout(PayoutRequest request) {
         log.info("Initiating PayDunya disburse: ref={}, amount={}, country={}",
                 request.getReference(), request.getAmount(), request.getCountry());
 
-        try {
-            Map<String, Object> invoiceBody = Map.of(
-                    "account_alias", normalisePhone(request.getRecipientPhone(), request.getCountry()),
-                    "amount", request.getAmount(),
-                    "withdraw_mode", withdrawMode(request.getOperator()));
+        String mode = request.getOperator() == null ? null : WITHDRAW_MODES.get(request.getOperator());
+        if (mode == null) {
+            return failure(request, "Opérateur du bénéficiaire non pris en charge par PayDunya");
+        }
 
-            Map<String, Object> invoice = post(apiUrl + disburseInvoicePath, invoiceBody);
-            if (!isSuccess(invoice)) {
-                return failure(request, asString(invoice.get("response_text")));
-            }
+        Map<String, Object> invoice = post(disburseUrl + "/get-invoice", Map.of(
+                "account_alias", normalisePhone(request.getRecipientPhone(), request.getCountry()),
+                "amount", request.getAmount(),
+                "withdraw_mode", mode,
+                "callback_url", baseUrl + "/api/v1/payments/callback/" + PLATFORM_NAME));
+        if (!isSuccess(invoice)) {
+            return failure(request, asString(invoice.get("response_text")));
+        }
+        String disburseToken = asString(invoice.get("disburse_token"));
+        if (disburseToken == null) {
+            return failure(request, "Jeton de décaissement absent de la réponse partenaire");
+        }
 
-            String disburseToken = asString(invoice.get("disburse_token"));
-            if (disburseToken == null) {
-                return failure(request, "Jeton de décaissement absent de la réponse partenaire");
-            }
+        Map<String, Object> submitted = submit(disburseToken, request.getReference());
+        if (isSuccess(submitted) && !"failed".equalsIgnoreCase(asString(submitted.get("status")))) {
+            return accepted(request, disburseToken, asString(submitted.get("status")));
+        }
 
-            Map<String, Object> submitted = post(apiUrl + disburseSubmitPath,
-                    Map.of("disburse_invoice", disburseToken,
-                            "disburse_id", nullSafe(request.getReference(), "")));
-
+        // Soumission sans issue nette : le statut du jeton tranche.
+        String status = asString(checkStatusOf(disburseToken).get("status"));
+        if ("created".equalsIgnoreCase(status)) {
+            submitted = submit(disburseToken, request.getReference());
             if (isSuccess(submitted)) {
-                return PayoutResponse.builder()
-                        .success(true)
-                        .message("Payout initiated successfully")
-                        .externalReference(asString(submitted.get("transaction_id")))
-                        .transactionReference(request.getReference())
-                        .status("PENDING")
-                        .build();
+                return accepted(request, disburseToken, asString(submitted.get("status")));
             }
             return failure(request, asString(submitted.get("response_text")));
-
-        } catch (Exception e) {
-            log.error("PayDunya disburse error: {}", e.getMessage());
-            return failure(request, e.getMessage());
         }
+        if ("pending".equalsIgnoreCase(status) || "success".equalsIgnoreCase(status)) {
+            return accepted(request, disburseToken, status);
+        }
+        return failure(request, asString(submitted.get("response_text")));
     }
 
+    /** Statut d'un versement par son jeton de décaissement (référence externe). */
     @Override
     public PayoutStatusResponse checkPayoutStatus(String reference) {
         try {
-            Map<String, Object> response = get(apiUrl + checkoutStatusPath + "/" + reference);
+            Map<String, Object> response = checkStatusOf(reference);
             return PayoutStatusResponse.builder()
                     .success(isSuccess(response))
                     .status(mapStatus(asString(response.get("status"))))
@@ -228,6 +257,30 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
             log.error("PayDunya payout status error: {}", e.getMessage());
             return PayoutStatusResponse.builder().success(false).message(e.getMessage()).build();
         }
+    }
+
+    private Map<String, Object> submit(String disburseToken, String reference) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("disburse_invoice", disburseToken);
+        if (reference != null) {
+            body.put("disburse_id", reference);
+        }
+        return post(disburseUrl + "/submit-invoice", body);
+    }
+
+    private Map<String, Object> checkStatusOf(String disburseToken) {
+        return post(disburseUrl + "/check-status", Map.of("disburse_invoice", disburseToken));
+    }
+
+    /** Un succès sans statut explicite est final, d'après la documentation. */
+    private PayoutResponse accepted(PayoutRequest request, String disburseToken, String status) {
+        return PayoutResponse.builder()
+                .success(true)
+                .message("Payout initiated successfully")
+                .externalReference(disburseToken)
+                .transactionReference(request.getReference())
+                .status(status == null || "success".equalsIgnoreCase(status) ? "COMPLETED" : "PENDING")
+                .build();
     }
 
     @Override
@@ -300,33 +353,6 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
                 .build();
     }
 
-    /** Mode de retrait attendu par le partenaire, dérivé de l'opérateur. */
-    private String withdrawMode(MobileOperator operator) {
-        if (operator == null) {
-            return "unknown";
-        }
-        return switch (operator) {
-            case ORANGE_SN -> "orange-money-senegal";
-            case FREE_SN -> "free-money-senegal";
-            case WAVE_SN -> "wave-senegal";
-            case ORANGE_CI -> "orange-money-ci";
-            case MTN_CI -> "mtn-ci";
-            case MOOV_CI -> "moov-ci";
-            case WAVE_CI -> "wave-ci";
-            case MTN_BJ -> "mtn-benin";
-            case MOOV_BJ -> "moov-benin";
-            case TOGOCOM_TG -> "t-money-togo";
-            case MOOV_TG -> "moov-togo";
-            case ORANGE_BF -> "orange-money-burkina";
-            case MOOV_BF -> "moov-burkina";
-            case ORANGE_ML -> "orange-money-mali";
-            case MOOV_ML -> "moov-mali";
-            case AIRTEL_NE -> "airtel-niger";
-            case MOOV_NE -> "moov-niger";
-            default -> "unknown";
-        };
-    }
-
     private String normalisePhone(String phone, Country country) {
         String cleaned = phone.replaceAll("[\\s\\-+]", "");
         if (cleaned.startsWith("00")) {
@@ -344,7 +370,7 @@ public class PayDunyaGateway implements PaymentGateway, PayoutGateway {
         }
         return switch (status.toLowerCase()) {
             case "completed", "success", "successful" -> "COMPLETED";
-            case "pending", "processing" -> "PENDING";
+            case "pending", "processing", "created" -> "PENDING";
             case "failed", "cancelled" -> "FAILED";
             default -> "UNKNOWN";
         };

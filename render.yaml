@@ -46,16 +46,16 @@ services:
       - key: INFOBIP_SENDER_EMAIL
         value: "aurlinmika5@selfserve.worlds-connected.co"
       - key: FEEXPAY_API_URL
-        value: "https://api.feexpay.me"
+        value: "https://api-v2.feexpay.me"
       - key: FEEXPAY_API_KEY
         sync: false  # Set this in Render Dashboard as a secret
       - key: FEEXPAY_SHOP_ID
         sync: false  # Set this in Render Dashboard
       - key: CINETPAY_API_URL
-        value: "https://api-checkout.cinetpay.com/v2"
-      - key: CINETPAY_API_KEY
-        sync: false  # Set this in Render Dashboard as a secret
-      - key: CINETPAY_SITE_ID
+        value: "https://api.cinetpay.co"
+      - key: CINETPAY_CREDENTIALS
+        sync: false  # ISO:api_key:api_password par pays, secret
+      - key: CINETPAY_DEFAULT_CLIENT_EMAIL
         sync: false  # Set this in Render Dashboard
       - key: PAYTECH_API_URL
         value: "https://paytech.sn/api"

@@ -11,12 +11,18 @@ signalée au démarrage par le contrôle de cohérence.
 
 | Passerelle | Pays de versement | Devises | État |
 |---|---|---|---|
-| **FeexPay** | BJ, TG, CI, CG | XOF, XAF | actif |
-| **CinetPay** | CI, SN, ML, GN, CM, BF, BJ, TG, NE, CD | XOF, XAF, GNF, CDF | actif |
+| **FeexPay** | BJ, TG, CI, CG, SN, BF | XOF, XAF | actif — API v2 (`api-v2.feexpay.me`) |
+| **CinetPay** | CI, SN, ML, GN, CM, BF, BJ, TG, NE, CD | XOF, XAF, GNF, CDF | actif dès que `CINETPAY_CREDENTIALS` est renseigné — API v1 2026 (`api.cinetpay.co`) |
 | **PayTech** | SN, ML | XOF | actif |
-| **PayDunya** | SN, CI, BJ, TG, BF, ML, NE | XOF | **inactif** — identifiants requis |
+| **PayDunya** | SN, CI, BJ, TG, BF, ML (+ CM en versement) | XOF, XAF | **inactif** — identifiants requis |
 | **Monetbil** | CM, SN, CD, CG, BJ, GN | XAF, XOF, CDF, GNF | **inactif** — identifiants requis |
 | **pawaPay** | BJ, BF, CM, CI, CD, CG, SN | XOF, XAF, CDF | **inactif** — jeton d'API requis |
+
+Couverture relue dans la documentation officielle le 9 octobre 2026 (migration
+`V20`) : FeexPay ouvre le Sénégal et le Burkina Faso, PayDunya ne couvre plus le
+Niger et verse au Cameroun (MTN). L'ancienne API CinetPay a été retirée par le
+partenaire : l'intégration utilise désormais l'API v1 de 2026, avec des
+identifiants par pays.
 
 Une passerelle « inactive » a ses routes déclarées en base, mais
 `isOperational()` renvoie faux tant que `gateway.<nom>.enabled` est faux ou que

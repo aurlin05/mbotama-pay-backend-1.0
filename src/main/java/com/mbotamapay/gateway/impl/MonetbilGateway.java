@@ -105,7 +105,8 @@ public class MonetbilGateway implements PaymentGateway, PayoutGateway {
     @Value("${gateway.monetbil.payment-status-path:/payment/v1/checkPayment}")
     private String paymentStatusPath;
 
-    @Value("${gateway.monetbil.payout-path:/v1/payouts}")
+    /** Chemin documenté sur monetbil.company (2026). L'ancien {@code /v1/payouts} était faux. */
+    @Value("${gateway.monetbil.payout-path:/payment/v1/payouts/withdrawal}")
     private String payoutPath;
 
     @Value("${gateway.monetbil.service-key:}")
@@ -116,6 +117,24 @@ public class MonetbilGateway implements PaymentGateway, PayoutGateway {
 
     @Value("${gateway.monetbil.enabled:false}")
     private boolean enabled;
+
+    @Value("${app.base-url:http://localhost:8080}")
+    private String baseUrl;
+
+    /** Codes opérateurs Monetbil, identiques en encaissement et en versement. */
+    private static final Map<MobileOperator, String> OPERATOR_CODES = new EnumMap<>(Map.ofEntries(
+            Map.entry(MobileOperator.MTN_CM, "CM_MTNMOBILEMONEY"),
+            Map.entry(MobileOperator.ORANGE_CM, "CM_ORANGEMONEY"),
+            Map.entry(MobileOperator.ORANGE_SN, "SN_ORANGEMONEY"),
+            Map.entry(MobileOperator.ORANGE_CD, "CD_ORANGEMONEY"),
+            Map.entry(MobileOperator.AIRTEL_CD, "CD_AIRTELMONEY"),
+            Map.entry(MobileOperator.AFRICELL_CD, "CD_AFRICELL"),
+            Map.entry(MobileOperator.MTN_CG, "CG_MTNMOBILEMONEY"),
+            Map.entry(MobileOperator.AIRTEL_CG, "CG_AIRTELMONEY"),
+            Map.entry(MobileOperator.MTN_BJ, "BJ_MTNMOBILEMONEY"),
+            Map.entry(MobileOperator.MOOV_BJ, "BJ_MOOVMONEY"),
+            Map.entry(MobileOperator.MTN_GN, "GN_MTNMOBILEMONEY"),
+            Map.entry(MobileOperator.ORANGE_GN, "GN_ORANGEMONEY")));
 
     private final RestTemplate restTemplate;
     private final com.mbotamapay.gateway.GatewayCapabilityRegistry registry;
@@ -170,7 +189,8 @@ public class MonetbilGateway implements PaymentGateway, PayoutGateway {
         try {
             Map<String, Object> body = new HashMap<>();
             body.put("service", serviceKey);
-            body.put("phonenumber", normalisePhone(request.getSenderPhone(), Country.CAMEROON));
+            body.put("phonenumber", Msisdn.of(request.getSenderPhone(),
+                    Country.fromPhoneNumber(request.getSenderPhone()).orElse(Country.CAMEROON)));
             body.put("amount", request.getAmount());
             body.put("currency", request.getCurrency());
             body.put("item_ref", request.getTransactionReference());
@@ -198,65 +218,60 @@ public class MonetbilGateway implements PaymentGateway, PayoutGateway {
         }
     }
 
+    /**
+     * Versement ({@code payouts/withdrawal}). Monetbil met la demande en file et
+     * notifie le résultat à {@code payout_notification_url} : il n'existe pas
+     * d'API de lecture du statut d'un versement.
+     *
+     * <p>
+     * Pas de try/catch générique : une expiration de délai doit remonter au
+     * PayoutExecutor, qui la traite comme une issue indéterminée.
+     */
     @Override
     public PayoutResponse initiatePayout(PayoutRequest request) {
         log.info("Initiating Monetbil payout: ref={}, amount={}, country={}",
                 request.getReference(), request.getAmount(), request.getCountry());
 
-        try {
-            Map<String, Object> body = new HashMap<>();
-            body.put("service_key", serviceKey);
-            body.put("service_secret", serviceSecret);
-            body.put("phonenumber", normalisePhone(request.getRecipientPhone(), request.getCountry()));
-            body.put("amount", request.getAmount());
-            body.put("currency", request.getCurrency());
-            body.put("external_reference", request.getReference());
-            body.put("receiver_name", request.getRecipientName());
+        Map<String, Object> body = new HashMap<>();
+        body.put("service_key", serviceKey);
+        body.put("service_secret", serviceSecret);
+        body.put("phonenumber", Msisdn.of(request.getRecipientPhone(), request.getCountry()));
+        body.put("amount", request.getAmount());
+        body.put("processing_number", request.getReference());
+        body.put("payout_notification_url", baseUrl + "/api/v1/payments/callback/" + PLATFORM_NAME);
+        String operator = request.getOperator() == null ? null : OPERATOR_CODES.get(request.getOperator());
+        if (operator != null) {
+            body.put("operator", operator);
+        }
 
-            Map<String, Object> response = post(apiUrl + payoutPath, body);
+        Map<String, Object> response = post(apiUrl + payoutPath, body);
 
-            if (isAccepted(response)) {
-                return PayoutResponse.builder()
-                        .success(true)
-                        .message("Payout initiated successfully")
-                        .externalReference(asString(response.get("transaction_id")))
-                        .transactionReference(request.getReference())
-                        .status("PENDING")
-                        .build();
-            }
+        if (Boolean.TRUE.equals(response.get("success"))) {
             return PayoutResponse.builder()
-                    .success(false)
-                    .message(nullSafe(asString(response.get("message")), "Payout refusé par Monetbil"))
+                    .success(true)
+                    .message(nullSafe(asString(response.get("message")), "Payout initiated successfully"))
+                    .externalReference(asString(response.get("transaction")))
                     .transactionReference(request.getReference())
-                    .status("FAILED")
-                    .build();
-
-        } catch (Exception e) {
-            log.error("Monetbil payout error: {}", e.getMessage());
-            return PayoutResponse.builder()
-                    .success(false)
-                    .message(e.getMessage())
-                    .transactionReference(request.getReference())
-                    .status("FAILED")
+                    .status("PENDING")
                     .build();
         }
+        return PayoutResponse.builder()
+                .success(false)
+                .message(nullSafe(asString(response.get("message")), "Payout refusé par Monetbil"))
+                .transactionReference(request.getReference())
+                .status("FAILED")
+                .build();
     }
 
+    /** Monetbil n'expose pas de lecture du statut d'un versement. */
     @Override
     public PayoutStatusResponse checkPayoutStatus(String reference) {
-        try {
-            Map<String, Object> response = post(apiUrl + paymentStatusPath, Map.of(
-                    "service", serviceKey,
-                    "paymentId", reference));
-            return PayoutStatusResponse.builder()
-                    .success(isAccepted(response))
-                    .status(mapStatus(asString(response.get("transaction_status"))))
-                    .externalReference(reference)
-                    .build();
-        } catch (Exception e) {
-            log.error("Monetbil payout status error: {}", e.getMessage());
-            return PayoutStatusResponse.builder().success(false).message(e.getMessage()).build();
-        }
+        return PayoutStatusResponse.builder()
+                .success(false)
+                .status("UNKNOWN")
+                .message("Monetbil ne fournit pas de statut de versement : résultat par notification")
+                .externalReference(reference)
+                .build();
     }
 
     @Override
@@ -322,21 +337,6 @@ public class MonetbilGateway implements PaymentGateway, PayoutGateway {
         }
         String status = asString(response.get("status"));
         return "REQUEST_ACCEPTED".equalsIgnoreCase(status) || "success".equalsIgnoreCase(status);
-    }
-
-    private String normalisePhone(String phone, Country country) {
-        if (phone == null) {
-            return null;
-        }
-        String cleaned = phone.replaceAll("[\\s\\-+]", "");
-        if (cleaned.startsWith("00")) {
-            cleaned = cleaned.substring(2);
-        }
-        Country target = country == null ? Country.CAMEROON : country;
-        if (cleaned.startsWith(target.getPhonePrefix())) {
-            cleaned = cleaned.substring(target.getPhonePrefix().length());
-        }
-        return cleaned;
     }
 
     private String mapStatus(String status) {

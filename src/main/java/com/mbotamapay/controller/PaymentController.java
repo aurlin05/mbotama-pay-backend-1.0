@@ -106,6 +106,12 @@ public class PaymentController {
             log.info("pawaPay callback acknowledged without processing (not a deposit)");
             return ResponseEntity.ok("Ignored");
         }
+        // Idem pour les webhooks de versement FeexPay (type « Payout »).
+        if ("feexpay".equalsIgnoreCase(platform) && payload != null
+                && "Payout".equalsIgnoreCase(asString(payload.get("type")))) {
+            log.info("FeexPay payout webhook acknowledged without processing");
+            return ResponseEntity.ok("Ignored");
+        }
 
         // Verify webhook signature
         if (!gateway.verifyWebhookSignature(payload.toString(), signature)) {
@@ -155,10 +161,14 @@ public class PaymentController {
         return ResponseEntity.ok(ApiResponse.success(status));
     }
 
+    private static String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
     private String extractReference(String platform, Map<String, Object> payload) {
         return switch (platform.toLowerCase()) {
-            case "feexpay" -> (String) payload.get("custom_id");
-            case "cinetpay" -> (String) payload.get("cpm_trans_id");
+            case "feexpay" -> asString(payload.get("callback_info"));
+            case "cinetpay" -> (String) payload.get("merchant_transaction_id");
             case "paytech" -> (String) payload.get("ref_command");
             case "pawapay" -> (String) payload.get("clientReferenceId");
             default -> (String) payload.get("reference");

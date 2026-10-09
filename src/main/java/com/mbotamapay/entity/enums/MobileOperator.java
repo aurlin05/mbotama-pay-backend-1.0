@@ -30,18 +30,19 @@ public enum MobileOperator {
     // Divergence non tranchée : les séries sont laissées à Celtiis, qui est le
     // seul des trois à être servi par une passerelle les déclarant.
     CELTIIS_BJ("Celtiis Bénin", Country.BENIN, Set.of("90", "91"),
-            EnumSet.of(GatewayType.FEEXPAY)),
+            EnumSet.of(GatewayType.FEEXPAY, GatewayType.PAYDUNYA)),
 
     // Sénégal — Wave est un portefeuille superposé, pas un réseau : son rattachement
     // au préfixe 78 est conservé en l'état, le modifier réacheminerait du trafic réel.
     ORANGE_SN("Orange Sénégal", Country.SENEGAL, Set.of("77"),
             EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
-                    GatewayType.MONETBIL, GatewayType.PAWAPAY)),
+                    GatewayType.MONETBIL, GatewayType.PAWAPAY, GatewayType.FEEXPAY)),
     FREE_SN("Free Sénégal", Country.SENEGAL, Set.of("76"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY, GatewayType.FEEXPAY)),
     WAVE_SN("Wave Sénégal", Country.SENEGAL, Set.of("78"),
             EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA,
-                    GatewayType.PAWAPAY)),
+                    GatewayType.PAWAPAY, GatewayType.FEEXPAY)),
 
     // Côte d'Ivoire
     ORANGE_CI("Orange Côte d'Ivoire", Country.COTE_DIVOIRE, Set.of("07"),
@@ -66,13 +67,14 @@ public enum MobileOperator {
     ORANGE_ML("Orange Mali", Country.MALI, Set.of("7"),
             EnumSet.of(GatewayType.PAYTECH, GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
     MOOV_ML("Moov Mali", Country.MALI, Set.of("6"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY)),
 
     // Burkina Faso
     ORANGE_BF("Orange Burkina", Country.BURKINA_FASO, Set.of("07"),
             EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
     MOOV_BF("Moov Burkina", Country.BURKINA_FASO, Set.of("06"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA, GatewayType.PAWAPAY)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA,
+                    GatewayType.PAWAPAY, GatewayType.FEEXPAY)),
 
     // Congo-Brazzaville — Monetbil ouvre un second chemin sur ce marché, qui ne
     // dépendait que d'une seule passerelle.
@@ -90,7 +92,8 @@ public enum MobileOperator {
     MTN_CM("MTN Cameroun", Country.CAMEROON,
             Set.of("67", "650", "651", "652", "653", "654",
                     "680", "681", "682", "683", "684"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL,
+                    GatewayType.PAWAPAY, GatewayType.PAYDUNYA)),
 
     // Guinée
     ORANGE_GN("Orange Guinée", Country.GUINEA, Set.of("62", "610", "611", "612"),
@@ -100,9 +103,9 @@ public enum MobileOperator {
 
     // Niger
     AIRTEL_NE("Airtel Niger", Country.NIGER, Set.of("97"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY)),
     MOOV_NE("Moov Niger", Country.NIGER, Set.of("90"),
-            EnumSet.of(GatewayType.CINETPAY, GatewayType.PAYDUNYA)),
+            EnumSet.of(GatewayType.CINETPAY)),
 
     // RD Congo
     ORANGE_CD("Orange RDC", Country.DRC, Set.of("80", "84", "85", "89"),
@@ -112,7 +115,7 @@ public enum MobileOperator {
     AIRTEL_CD("Airtel RDC", Country.DRC, Set.of("97", "98", "99"),
             EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL, GatewayType.PAWAPAY)),
     AFRICELL_CD("Africell RDC", Country.DRC, Set.of("90", "91"),
-            EnumSet.of(GatewayType.MONETBIL));
+            EnumSet.of(GatewayType.CINETPAY, GatewayType.MONETBIL));
 
     private final String displayName;
     private final Country country;
@@ -167,6 +170,11 @@ public enum MobileOperator {
         }
         if (cleaned.startsWith(country.getPhonePrefix())) {
             cleaned = cleaned.substring(country.getPhonePrefix().length());
+        }
+        // Bénin : numérotation à 10 chiffres depuis fin 2024, « 01 » devant l'ancien
+        // numéro à 8 chiffres. Les préfixes opérateurs sont ceux de l'ancien numéro.
+        if (country == Country.BENIN && cleaned.length() == 10 && cleaned.startsWith("01")) {
+            cleaned = cleaned.substring(2);
         }
 
         final String localNumber = cleaned;
