@@ -16,6 +16,7 @@ signalée au démarrage par le contrôle de cohérence.
 | **PayTech** | SN, ML | XOF | actif |
 | **PayDunya** | SN, CI, BJ, TG, BF, ML, NE | XOF | **inactif** — identifiants requis |
 | **Monetbil** | CM, SN, CD, CG, BJ, GN | XAF, XOF, CDF, GNF | **inactif** — identifiants requis |
+| **pawaPay** | BJ, BF, CM, CI, CD, CG, SN | XOF, XAF, CDF | **inactif** — jeton d'API requis |
 
 Une passerelle « inactive » a ses routes déclarées en base, mais
 `isOperational()` renvoie faux tant que `gateway.<nom>.enabled` est faux ou que
@@ -94,25 +95,29 @@ frontière monétaire.
 Nombre de passerelles capables de servir chaque pays. Un pays à **une seule**
 passerelle n'a aucun repli : une panne partenaire y ferme le corridor.
 
-| Pays | Actives aujourd'hui | Après activation PayDunya / Monetbil |
-|---|---|---|
-| Côte d'Ivoire | FeexPay, CinetPay — **2** | + PayDunya — **3** |
-| Bénin | FeexPay, CinetPay — **2** | + PayDunya, Monetbil — **4** |
-| Togo | FeexPay, CinetPay — **2** | + PayDunya — **3** |
-| Sénégal | PayTech, CinetPay — **2** | + PayDunya, Monetbil — **4** |
-| Mali | PayTech, CinetPay — **2** | + PayDunya — **3** |
-| Burkina Faso | CinetPay — **1** ⚠ | + PayDunya — **2** |
-| Niger | CinetPay — **1** ⚠ | + PayDunya — **2** |
-| Cameroun | CinetPay — **1** ⚠ | + Monetbil — **2** |
-| Guinée | CinetPay — **1** ⚠ | + Monetbil — **2** |
-| RD Congo | CinetPay — **1** ⚠ | + Monetbil — **2** |
-| Congo-Brazzaville | FeexPay — **1** ⚠ | + Monetbil — **2** |
+| Pays | Actives aujourd'hui | Après activation PayDunya / Monetbil | + pawaPay |
+|---|---|---|---|
+| Côte d'Ivoire | FeexPay, CinetPay — **2** | + PayDunya — **3** | ✔ **4** |
+| Bénin | FeexPay, CinetPay — **2** | + PayDunya, Monetbil — **4** | ✔ **5** |
+| Togo | FeexPay, CinetPay — **2** | + PayDunya — **3** | — |
+| Sénégal | PayTech, CinetPay — **2** | + PayDunya, Monetbil — **4** | ✔ **5** |
+| Mali | PayTech, CinetPay — **2** | + PayDunya — **3** | — |
+| Burkina Faso | CinetPay — **1** ⚠ | + PayDunya — **2** | ✔ **3** |
+| Niger | CinetPay — **1** ⚠ | + PayDunya — **2** | — |
+| Cameroun | CinetPay — **1** ⚠ | + Monetbil — **2** | ✔ **3** |
+| Guinée | CinetPay — **1** ⚠ | + Monetbil — **2** | — |
+| RD Congo | CinetPay — **1** ⚠ | + Monetbil — **2** | ✔ **3** |
+| Congo-Brazzaville | FeexPay — **1** ⚠ | + Monetbil — **2** | ✔ **3** |
 
 ⚠ Point de défaillance unique.
 
 **L'activation des deux nouveaux partenaires supprime les six points de
 défaillance unique du réseau.** C'est le principal apport opérationnel de cette
 intégration, davantage que le gain tarifaire.
+
+pawaPay ajoute un chemin de plus vers sept pays, et à lui seul supprime le
+point de défaillance unique au Burkina Faso, au Cameroun, en RD Congo et au
+Congo-Brazzaville, sans attendre PayDunya ni Monetbil.
 
 ---
 
@@ -255,4 +260,6 @@ limits:
 | Gabon, Liberia, Ouganda | Couverts par Monetbil, absents de l'énumération `Country`. Le Gabon est le candidat le plus naturel : zone CEMAC, même devise que CM et CG |
 | Préfixes 90/91 au Bénin | Attribués à MTN dans la table Monetbil, à Celtiis dans notre catalogue. Laissés à Celtiis ; le contrôle de cohérence signale toute collision |
 | Wave au Sénégal | Modélisé comme un réseau avec le préfixe 78, alors que c'est un portefeuille superposé. Non modifié : le corriger réacheminerait du trafic réel |
+| pawaPay : barème et préfinancement | Routes seedées à 3,00 % / 3,50 % (provisoire). Les versements sont préfinancés par pays : un portefeuille vide produit `PAWAPAY_WALLET_OUT_OF_FUNDS` et le moteur bascule sur une autre passerelle |
+| pawaPay : non pris en charge | Encaissement Orange Burkina (code OTP de préautorisation non recueilli). Moov CI, Celtiis BJ, Africell RDC absents chez pawaPay |
 | Contrainte d'unicité sur `external_reference` | À poser après dédoublonnage des références historiques (8 caractères hexadécimaux, collisions possibles) |
