@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -66,6 +67,10 @@ public class SecurityConfig {
                         .requestMatchers(WHITE_LIST_URLS).permitAll()
                         .requestMatchers("/transfers/preview").permitAll()
                         .requestMatchers("/users/me/**").authenticated()
+                        // Rappels des passerelles : appelés par le partenaire, sans jeton
+                        // utilisateur. Le statut n'est jamais lu dans le corps reçu : le
+                        // contrôleur le relit auprès de l'API de la passerelle.
+                        .requestMatchers(HttpMethod.POST, "/payments/callback/**").permitAll()
                         .requestMatchers("/payments/**").hasAnyRole("KYC_LEVEL_1", "KYC_LEVEL_2", "ADMIN")
                         .requestMatchers("/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())

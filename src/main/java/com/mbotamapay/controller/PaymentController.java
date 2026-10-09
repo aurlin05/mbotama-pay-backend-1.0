@@ -99,6 +99,14 @@ public class PaymentController {
 
         PaymentGateway gateway = gatewayService.getGateway(platform);
 
+        // pawaPay envoie aussi les rappels de versement, de remboursement et de
+        // caisse. Ils ne concernent pas l'encaissement : on les acquitte, sans quoi
+        // pawaPay les renverrait en boucle.
+        if ("pawapay".equalsIgnoreCase(platform) && (payload == null || !payload.containsKey("depositId"))) {
+            log.info("pawaPay callback acknowledged without processing (not a deposit)");
+            return ResponseEntity.ok("Ignored");
+        }
+
         // Verify webhook signature
         if (!gateway.verifyWebhookSignature(payload.toString(), signature)) {
             log.warn("Invalid webhook signature from {}", platform);
@@ -152,11 +160,7 @@ public class PaymentController {
             case "feexpay" -> (String) payload.get("custom_id");
             case "cinetpay" -> (String) payload.get("cpm_trans_id");
             case "paytech" -> (String) payload.get("ref_command");
-            // Seuls les callbacks de dépôt concernent l'encaissement : un callback de
-            // versement porte la même référence mais un payoutId.
-            case "pawapay" -> payload.containsKey("depositId")
-                    ? (String) payload.get("clientReferenceId")
-                    : null;
+            case "pawapay" -> (String) payload.get("clientReferenceId");
             default -> (String) payload.get("reference");
         };
     }
